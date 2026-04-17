@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -6,8 +6,10 @@ import {
   useUpdateCreditNote,
   useDeleteCreditNote,
   useGetSettings,
+  useListInvoices,
   getGetCreditNoteQueryKey,
   getListCreditNotesQueryKey,
+  getListInvoicesQueryKey,
 } from "@workspace/api-client-react";
 import { pdf } from "@react-pdf/renderer";
 import CreditNotePDF from "@/components/credit-note-pdf";
@@ -27,6 +29,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ArrowLeft,
   CreditCard,
   FileText,
@@ -41,6 +50,7 @@ import {
   Banknote,
   CheckCircle2,
   Pencil,
+  Zap,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/format";
 
@@ -70,10 +80,20 @@ export default function CreditNoteDetail() {
   const { data: settings } = useGetSettings();
   const updateMutation = useUpdateCreditNote();
   const deleteMutation = useDeleteCreditNote();
+  const clientId = (cn as any)?.clientId as number | undefined;
+  const { data: invoicesData } = useListInvoices(
+    { clientId },
+    { query: { enabled: !!clientId } }
+  );
 
   const [showVoidDialog, setShowVoidDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDeleteRefundDialog, setShowDeleteRefundDialog] = useState(false);
+
+  // Apply Credit state
+  const [applyInvoiceId, setApplyInvoiceId] = useState<string>("");
+  const [applyAmount, setApplyAmount] = useState<string>("");
+  const [isApplying, setIsApplying] = useState(false);
 
   // Refund processed form state
   const [showRefundForm, setShowRefundForm] = useState(false);
@@ -222,6 +242,52 @@ export default function CreditNoteDetail() {
   const terminalStatuses = ["voided", "fully_used", "fully_refunded"];
   const canVoid = !terminalStatuses.includes(cn.status);
   const canDelete = cn.usedAmount === 0 && cn.status !== "voided";
+  const canApply = !terminalStatuses.includes(cn.status) && cn.remainingAmount > 0;
+
+  // Invoices for this client that still have an outstanding balance
+  const applicableInvoices = useMemo(() => {
+    return (invoicesData?.invoices ?? []).filter(
+      (inv) => inv.paymentStatus !== "paid" && inv.paymentStatus !== "refunded" && (inv.outstandingBalance ?? 0) > 0
+    );
+  }, [invoicesData]);
+
+  const selectedInvoice = applicableInvoices.find((inv) => String(inv.id) === applyInvoiceId);
+  const maxApply = selectedInvoice
+    ? Math.min(cn.remainingAmount, selectedInvoice.outstandingBalance ?? 0)
+    : cn.remainingAmount;
+
+  async function handleApplyCredit() {
+    if (!applyInvoiceId || !applyAmount || Number(applyAmount) <= 0) return;
+    const selectedInv = applicableInvoices.find((inv) => String(inv.id) === applyInvoiceId);
+    if (!selectedInv) return;
+    setIsApplying(true);
+    try {
+      const res = await fetch(`/api/credit-notes/${id}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: selectedInv.id,
+          invoiceNumber: selectedInv.invoiceNumber,
+          amount: Number(applyAmount),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: "Failed to apply credit", description: err.error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: getGetCreditNoteQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getListCreditNotesQueryKey() });
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey.some((k) => String(k).includes("/api/invoices")) });
+      toast({ title: "Credit Applied", description: `${formatCurrency(Number(applyAmount), cn.currency)} applied to ${selectedInv.invoiceNumber}` });
+      setApplyInvoiceId("");
+      setApplyAmount("");
+    } catch {
+      toast({ title: "Failed to apply credit", variant: "destructive" });
+    } finally {
+      setIsApplying(false);
+    }
+  }
 
   const cnAny = cn as any;
   const hasRefundProcessed =
@@ -332,6 +398,110 @@ export default function CreditNoteDetail() {
           </div>
         )}
       </div>
+
+      {/* Apply Credit to Invoice section */}
+      {canApply && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-purple-200 dark:border-purple-700 overflow-hidden">
+          <div className="px-6 py-4 border-b border-purple-100 dark:border-purple-700 flex items-center gap-2 bg-purple-50 dark:bg-purple-900/20">
+            <Zap className="h-5 w-5 text-purple-600" />
+            <h2 className="text-base font-semibold text-purple-900 dark:text-purple-100">Apply Credit to Invoice</h2>
+            <span className="ml-auto text-sm text-purple-600 dark:text-purple-300 font-medium">
+              Available: {formatCurrency(cn.remainingAmount, cn.currency)}
+            </span>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {applicableInvoices.length === 0 ? (
+              <div className="text-center py-4">
+                <p className="text-sm text-muted-foreground">No outstanding invoices found for this client.</p>
+                <p className="text-xs text-muted-foreground mt-1">Credits can only be applied to invoices with an outstanding balance.</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>Select Invoice</Label>
+                  <Select value={applyInvoiceId} onValueChange={(v) => { setApplyInvoiceId(v); setApplyAmount(""); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose an invoice to apply credit to..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {applicableInvoices.map((inv) => (
+                        <SelectItem key={inv.id} value={String(inv.id)}>
+                          <span className="font-mono">{inv.invoiceNumber}</span>
+                          <span className="ml-2 text-muted-foreground">
+                            — Outstanding: {formatCurrency(inv.outstandingBalance ?? 0, cn.currency)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedInvoice && (
+                  <div className="bg-purple-50 dark:bg-purple-900/10 rounded-lg px-4 py-3 text-sm grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-xs text-purple-600 font-medium mb-0.5">Invoice Total</p>
+                      <p className="font-semibold">{formatCurrency(selectedInvoice.totalAmount ?? 0, cn.currency)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600 font-medium mb-0.5">Already Paid</p>
+                      <p className="font-semibold text-emerald-700">{formatCurrency(selectedInvoice.paidAmount ?? 0, cn.currency)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600 font-medium mb-0.5">Outstanding</p>
+                      <p className="font-semibold text-amber-700">{formatCurrency(selectedInvoice.outstandingBalance ?? 0, cn.currency)}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Amount to Apply ({cn.currency})</Label>
+                    {selectedInvoice && (
+                      <button
+                        type="button"
+                        className="text-xs text-purple-600 hover:text-purple-800 underline"
+                        onClick={() => setApplyAmount(String(maxApply))}
+                      >
+                        Use max ({formatCurrency(maxApply, cn.currency)})
+                      </button>
+                    )}
+                  </div>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max={maxApply}
+                    placeholder="0.00"
+                    value={applyAmount}
+                    onChange={(e) => setApplyAmount(e.target.value)}
+                    disabled={!applyInvoiceId}
+                  />
+                  {applyAmount && Number(applyAmount) > maxApply && (
+                    <p className="text-xs text-red-600">
+                      Exceeds maximum of {formatCurrency(maxApply, cn.currency)}
+                    </p>
+                  )}
+                </div>
+
+                <Button
+                  className="w-full bg-purple-600 hover:bg-purple-700"
+                  onClick={handleApplyCredit}
+                  disabled={
+                    isApplying ||
+                    !applyInvoiceId ||
+                    !applyAmount ||
+                    Number(applyAmount) <= 0 ||
+                    Number(applyAmount) > maxApply
+                  }
+                >
+                  {isApplying ? "Applying..." : "Apply Credit"}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Refund Processed section */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">

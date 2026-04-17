@@ -616,7 +616,7 @@ export default function LedgerPDF({
                   : row.balance < 0 ? styles.cellTextEmerald
                   : [styles.cellTextGray, { textAlign: "right" as const }]
                 }>
-                  {fmtAmt(Math.abs(row.balance), cur)}
+                  {fmtAmt(row.balance, cur)}
                 </Text>
               </View>
             </View>

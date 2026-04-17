@@ -191,12 +191,9 @@ function buildDescriptionLines(inv: Invoice): string[] {
 }
 
 function rowBalance(inv: Invoice): number {
-  const raw = inv as unknown as Record<string, number>;
-  const cancellationCharges = raw.cancellationCharges ?? 0;
-  const otherRetained = raw.otherRetainedCharges ?? 0;
-  const penalty = cancellationCharges + otherRetained;
   if (inv.paymentStatus === "refunded") {
-    return Math.max(0, penalty - inv.paidAmount);
+    // Refund creates a negative balance: company owes the client the refunded amount
+    return -(inv.refundAmount ?? 0);
   }
   return inv.outstandingBalance ?? 0;
 }
@@ -1058,9 +1055,7 @@ export default function ClientLedger() {
                         </td>
                         <td className={`px-3 py-2.5 font-bold whitespace-nowrap ${balance > 0 ? "text-amber-700" : balance < 0 ? "text-emerald-700" : "text-slate-400"}`}>
                           <div className="text-right">
-                            {balance === 0
-                              ? formatCurrency(0, inv.currency ?? currency)
-                              : formatCurrency(Math.abs(balance), inv.currency ?? currency)}
+                            {formatCurrency(balance, inv.currency ?? currency)}
                           </div>
                         </td>
                       </tr>

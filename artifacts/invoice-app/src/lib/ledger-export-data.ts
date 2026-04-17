@@ -91,11 +91,8 @@ function descLines(inv: Invoice): string[] {
 }
 
 function rowBalance(inv: Invoice): number {
-  const raw = inv as unknown as Record<string, number>;
-  const cc  = raw.cancellationCharges ?? 0;
-  const oc  = raw.otherRetainedCharges ?? 0;
   if (inv.paymentStatus === "paid")     return 0;
-  if (inv.paymentStatus === "refunded") return cc + oc;
+  if (inv.paymentStatus === "refunded") return -(inv.refundAmount ?? 0);
   if (inv.paymentStatus === "partial")  return (inv.totalAmount ?? 0) - (inv.paidAmount ?? 0);
   return inv.totalAmount ?? 0;
 }

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, desc, ilike, and, sql } from "drizzle-orm";
-import { db, creditNotesTable, clientsTable, pool } from "@workspace/db";
+import { db, creditNotesTable, clientsTable, invoicesTable, pool } from "@workspace/db";
 import {
   ListCreditNotesQueryParams,
   CreateCreditNoteBody,
@@ -222,12 +222,13 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
   if (!bodyParsed.success) return res.status(400).json({ error: "Invalid body" });
 
   const cnId = paramsParsed.data.id;
-  const applyAmount = bodyParsed.data.amount;
+  const { amount: applyAmount, invoiceId, invoiceNumber } = bodyParsed.data;
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
+    // Lock & validate credit note
     const lockResult = await client.query(
       "SELECT * FROM credit_notes WHERE id = $1 FOR UPDATE",
       [cnId]
@@ -249,6 +250,7 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
       return res.status(400).json({ error: `Amount exceeds remaining credit of ${remaining}` });
     }
 
+    // Update credit note
     const newUsed = Number(cn.used_amount) + applyAmount;
     const newRemaining = remaining - applyAmount;
     const newStatus = newRemaining <= 0 ? "fully_used" : "partially_used";
@@ -256,6 +258,29 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
     await client.query(
       `UPDATE credit_notes SET used_amount = $1, remaining_amount = $2, status = $3, updated_at = NOW() WHERE id = $4`,
       [String(newUsed), String(newRemaining), newStatus, cnId]
+    );
+
+    // Lock & update the invoice
+    const invResult = await client.query(
+      "SELECT * FROM invoices WHERE id = $1 FOR UPDATE",
+      [invoiceId]
+    );
+    if (invResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Invoice not found" });
+    }
+
+    const inv = invResult.rows[0];
+    const totalAmount = Number(inv.total_amount);
+    const currentPaid = Number(inv.paid_amount ?? 0);
+    const refundAmount = Number(inv.refund_amount ?? 0);
+    const newPaid = currentPaid + applyAmount;
+    const newOutstanding = Math.max(0, totalAmount - newPaid - refundAmount);
+    const newPaymentStatus = newOutstanding <= 0 ? "paid" : "partial";
+
+    await client.query(
+      `UPDATE invoices SET paid_amount = $1, outstanding_balance = $2, payment_status = $3, updated_at = NOW() WHERE id = $4`,
+      [String(newPaid), String(newOutstanding), newPaymentStatus, invoiceId]
     );
 
     await client.query("COMMIT");
