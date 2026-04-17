@@ -199,13 +199,16 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: "row",
     backgroundColor: C.accent,
-    paddingVertical: 4,
+    paddingVertical: 6,
     paddingHorizontal: 4,
+    minHeight: 28,
+    alignItems: "stretch",
   },
   tableHeaderText: {
-    fontSize: 6.5,
+    fontSize: 5.7,
     fontFamily: "Helvetica-Bold",
     color: C.white,
+    lineHeight: 1.1,
   },
   tableRow: {
     flexDirection: "row",
@@ -412,19 +415,20 @@ export default function LedgerPDF({
   const cur = currency || "PKR";
 
   // Column widths — landscape A4 available ≈ 770pt (841.89 - 36*2)
-  // Fixed cols: 50+54+50+44+60+55+46+60+54+88+56 = 617  →  desc flex gets ~153
-  const colDate = 50;
-  const colInv = 54;
-  const colDeal = 50;
+  const colDate = 52;
+  const colInv = 52;
+  const colDeal = 56;
   const colVert = 44;
   // colDesc is flex
-  const colAmt = 60;
-  const colRefund = 55;
-  const colPenalty = 46;
-  const colPaid = 60;
-  const colPayDate = 54;
-  const colRemarks = 88;
-  const colBal = 56;
+  const colAmt = 66;
+  const colRefund = 66;
+  const colPenalty = 50;
+  const colPaid = 72;
+  const colPayDate = 62;
+  const colRemarks = 70;
+  const colBal = 64;
+  const rightHeader = [styles.tableHeaderText, { textAlign: "right" as const }];
+  const rightMuted = [styles.cellTextGray, { textAlign: "right" as const }];
 
   return (
     <Document title={`${ledgerTitle} – ${clientName}`} author={settings.companyName || "Ledger"}>
@@ -513,13 +517,13 @@ export default function LedgerPDF({
 
         <View style={styles.tableHeader}>
           <View style={{ width: colDate }}>
-            <Text style={styles.tableHeaderText}>Date</Text>
+            <Text style={styles.tableHeaderText}>Invoice{"\n"}Date</Text>
           </View>
           <View style={{ width: colInv }}>
-            <Text style={styles.tableHeaderText}>Invoice No.</Text>
+            <Text style={styles.tableHeaderText}>Invoice{"\n"}No.</Text>
           </View>
           <View style={{ width: colDeal }}>
-            <Text style={styles.tableHeaderText}>Deal/Booking</Text>
+            <Text style={styles.tableHeaderText}>Deal /{"\n"}Booking</Text>
           </View>
           <View style={{ width: colVert }}>
             <Text style={styles.tableHeaderText}>Vertical</Text>
@@ -528,25 +532,25 @@ export default function LedgerPDF({
             <Text style={styles.tableHeaderText}>Description</Text>
           </View>
           <View style={{ width: colAmt }}>
-            <Text style={[styles.tableHeaderText, { textAlign: "right" }]}>Invoice Amt</Text>
+            <Text style={rightHeader}>Invoice{"\n"}Amount</Text>
           </View>
           <View style={{ width: colRefund }}>
-            <Text style={[styles.tableHeaderText, { textAlign: "right" }]}>Refund Amt</Text>
+            <Text style={rightHeader}>Refund{"\n"}Amount</Text>
           </View>
           <View style={{ width: colPenalty }}>
-            <Text style={[styles.tableHeaderText, { textAlign: "right" }]}>Penalty</Text>
+            <Text style={rightHeader}>Penalty</Text>
           </View>
           <View style={{ width: colPaid }}>
-            <Text style={[styles.tableHeaderText, { textAlign: "right" }]}>Pymt Rcvd</Text>
+            <Text style={rightHeader}>Pymt{"\n"}Received</Text>
           </View>
           <View style={{ width: colPayDate }}>
-            <Text style={styles.tableHeaderText}>Pymt Date</Text>
+            <Text style={styles.tableHeaderText}>Pymt{"\n"}Date</Text>
           </View>
           <View style={{ width: colRemarks }}>
             <Text style={styles.tableHeaderText}>Remarks</Text>
           </View>
           <View style={{ width: colBal }}>
-            <Text style={[styles.tableHeaderText, { textAlign: "right" }]}>Balance</Text>
+            <Text style={rightHeader}>Balance</Text>
           </View>
         </View>
 
@@ -585,17 +589,17 @@ export default function LedgerPDF({
                 <Text style={[styles.cellTextRightBold]}>{fmtAmt(row.totalAmount, cur)}</Text>
               </View>
               <View style={{ width: colRefund, overflow: "hidden" }}>
-                <Text style={row.refundAmount > 0 ? styles.cellTextBlue : styles.cellTextGray}>
+                <Text style={row.refundAmount > 0 ? styles.cellTextBlue : rightMuted}>
                   {row.refundAmount > 0 ? fmtAmt(row.refundAmount, cur) : "—"}
                 </Text>
               </View>
               <View style={{ width: colPenalty, overflow: "hidden" }}>
-                <Text style={row.penalty > 0 ? styles.cellTextOrange : styles.cellTextGray}>
+                <Text style={row.penalty > 0 ? styles.cellTextOrange : rightMuted}>
                   {row.penalty > 0 ? fmtAmt(row.penalty, cur) : "—"}
                 </Text>
               </View>
               <View style={{ width: colPaid, overflow: "hidden" }}>
-                <Text style={row.paidAmount > 0 ? styles.cellTextEmerald : styles.cellTextGray}>
+                <Text style={row.paidAmount > 0 ? styles.cellTextEmerald : rightMuted}>
                   {row.paidAmount > 0 ? fmtAmt(row.paidAmount, cur) : "—"}
                 </Text>
               </View>

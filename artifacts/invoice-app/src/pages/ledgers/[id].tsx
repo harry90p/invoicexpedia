@@ -201,7 +201,64 @@ function rowBalance(inv: Invoice): number {
   return inv.outstandingBalance ?? 0;
 }
 
-function buildLedgerRows(invoices: Invoice[], runningBalances: number[]): LedgerRow[] {
+function getLedgerRefundAmount(inv: Invoice, creditNotes: CreditNote[] = []): number {
+  const toNumber = (value: unknown) => {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const normalize = (value: unknown) => String(value ?? "").trim().toLowerCase();
+  const normalizeType = (value: unknown) => normalize(value).replace(/[\s-]+/g, "_");
+  const raw = inv as unknown as Record<string, unknown>;
+  const invoiceRefundAmount = toNumber(inv.refundAmount);
+  if (invoiceRefundAmount > 0) return invoiceRefundAmount;
+
+  const inlineRefund = toNumber(raw.refundProcessedAmount ?? raw.netRefundAmount ?? raw.refundAmount);
+  if (inlineRefund > 0) return inlineRefund;
+
+  const invNumber = normalize(inv.invoiceNumber);
+  const linkedNumber = normalize(raw.linkedInvoiceNumber);
+  const linkedId = toNumber(raw.linkedInvoiceId);
+  const creditNoteId = toNumber(raw.creditNoteId);
+  const matchedCreditNotes = creditNotes.filter((cn) => {
+    const cnRaw = cn as unknown as Record<string, unknown>;
+    const type = normalizeType(cn.type);
+    const cnInvoiceNumber = normalize(cn.invoiceNumber);
+    const cnDescription = normalize(cn.description);
+    const cnPaymentRef = normalize(cnRaw.paymentRef);
+    const cnId = toNumber(cn.id);
+    const cnInvoiceId = toNumber(cn.invoiceId);
+    const isRefundCredit = type.includes("refund") || type === "refund_credit";
+
+    if (!isRefundCredit) return false;
+    return (
+      (creditNoteId > 0 && cnId === creditNoteId) ||
+      (cnInvoiceId > 0 && cnInvoiceId === inv.id) ||
+      (linkedId > 0 && cnInvoiceId === linkedId) ||
+      (!!cnInvoiceNumber && (cnInvoiceNumber === invNumber || cnInvoiceNumber === linkedNumber)) ||
+      (!!invNumber && (cnDescription.includes(invNumber) || cnPaymentRef.includes(invNumber)))
+    );
+  });
+
+  const creditNoteRefund = matchedCreditNotes
+    .reduce((sum, cn) => {
+      const cnRaw = cn as unknown as Record<string, unknown>;
+      const processed = toNumber(cnRaw.refundProcessedAmount);
+      return sum + (processed > 0 ? processed : toNumber(cn.amount));
+    }, 0);
+  if (creditNoteRefund > 0) return creditNoteRefund;
+
+  if (inv.paymentStatus === "refunded") {
+    const paid = toNumber(inv.paidAmount);
+    const penalty = toNumber(raw.cancellationCharges) + toNumber(raw.otherRetainedCharges);
+    const baseAmount = paid > 0 ? paid : toNumber(inv.totalAmount);
+    const inferredRefund = Math.max(0, baseAmount - penalty);
+    if (inferredRefund > 0) return inferredRefund;
+  }
+
+  return 0;
+}
+
+function buildLedgerRows(invoices: Invoice[], runningBalances: number[], creditNotes: CreditNote[] = []): LedgerRow[] {
   return invoices.map((inv, idx) => {
     const raw = inv as unknown as Record<string, unknown>;
     const cancellationCharges = (raw.cancellationCharges as number) ?? 0;
@@ -222,7 +279,7 @@ function buildLedgerRows(invoices: Invoice[], runningBalances: number[]): Ledger
       category: inv.category,
       description: descLines.join(" | "),
       totalAmount: inv.totalAmount ?? 0,
-      refundAmount: inv.refundAmount ?? 0,
+      refundAmount: getLedgerRefundAmount(inv, creditNotes),
       penalty,
       paidAmount: inv.paidAmount ?? 0,
       paymentDate: hasPaid ? inv.updatedAt : undefined,
@@ -264,7 +321,10 @@ export default function ClientLedger() {
 
   const totalInvoiced = useMemo(() => invoices.reduce((s, v) => s + (v.totalAmount ?? 0), 0), [invoices]);
   const totalPaid = useMemo(() => invoices.reduce((s, v) => s + (v.paidAmount ?? 0), 0), [invoices]);
-  const totalRefunded = useMemo(() => invoices.reduce((s, v) => s + (v.refundAmount ?? 0), 0), [invoices]);
+  const totalRefunded = useMemo(
+    () => invoices.reduce((s, v) => s + getLedgerRefundAmount(v, creditNotes), 0),
+    [invoices, creditNotes]
+  );
   const totalPenalty = useMemo(
     () => invoices
       .filter((v) => v.paymentStatus === "refunded")
@@ -321,7 +381,7 @@ export default function ClientLedger() {
   const handleDownloadPDF = async () => {
     setIsDownloading(true);
     try {
-      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       const cnRows: CreditNoteRow[] = creditNotes.map((cn) => ({
         creditNoteNumber: cn.creditNoteNumber,
         invoiceNumber: cn.invoiceNumber ?? undefined,
@@ -461,21 +521,22 @@ export default function ClientLedger() {
         "Description", "Invoice Amount", "Refund Amount", "Penalty",
         "Pymt Received", "Payment Date", "Remarks", "Status", "Balance",
       ];
-      const colWidths = [15, 14, 18, 14, 30, 16, 15, 14, 15, 14, 18, 12, 15];
+      const colWidths = [15, 14, 18, 14, 30, 16, 15, 14, 18, 16, 20, 12, 16];
 
       const hRow = ws.addRow(tableHeaders);
       hRow.eachCell((cell) => {
         cell.fill = headerFill;
         cell.font = headerFont;
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
         cell.border = {
           bottom: { style: "thin", color: { argb: "FFFFFFFF" } },
         };
       });
+      hRow.height = 28;
 
       ws.columns = tableHeaders.map((_, i) => ({ width: colWidths[i] }));
 
-      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row, idx) => {
         const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
         const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
@@ -625,7 +686,7 @@ export default function ClientLedger() {
         "Pymt Received", "Payment Date", "Remarks", "Status", "Balance",
       ].map(escCSV).join(","));
 
-      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row) => {
         const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
         const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
@@ -847,22 +908,37 @@ export default function ClientLedger() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs" style={{ minWidth: "1200px" }}>
+          <table className="w-full table-fixed text-xs" style={{ minWidth: "1460px" }}>
+            <colgroup>
+              <col className="w-[102px]" />
+              <col className="w-[116px]" />
+              <col className="w-[132px]" />
+              <col className="w-[98px]" />
+              <col className="w-[100px]" />
+              <col className="w-[250px]" />
+              <col className="w-[112px]" />
+              <col className="w-[112px]" />
+              <col className="w-[98px]" />
+              <col className="w-[128px]" />
+              <col className="w-[108px]" />
+              <col className="w-[178px]" />
+              <col className="w-[126px]" />
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
-                <th className="text-left px-3 py-3 whitespace-nowrap">Invoice Date</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Invoice No.</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Deal / Booking ID</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Vertical</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Type</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap max-w-[160px]">Description</th>
-                <th className="text-right px-3 py-3 whitespace-nowrap">Invoice Amt</th>
-                <th className="text-right px-3 py-3 whitespace-nowrap">Refund Amt</th>
-                <th className="text-right px-3 py-3 whitespace-nowrap">Penalty</th>
-                <th className="text-right px-3 py-3 whitespace-nowrap">Pymt Received</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Pymt Date</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Remarks</th>
-                <th className="text-right px-3 py-3 whitespace-nowrap">Balance</th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Date</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice No.</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Deal / Booking ID</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Vertical</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Type</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Description</span></th>
+                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Amount</span></th>
+                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Refund Amount</span></th>
+                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Penalty</span></th>
+                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Received</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Date</span></th>
+                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Remarks</span></th>
+                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Balance</span></th>
               </tr>
             </thead>
             <tbody>
@@ -897,6 +973,7 @@ export default function ClientLedger() {
                     const descLines = buildDescriptionLines(inv);
                     const balance = runningBalances[idx];
                     const invType = getInvoiceType(inv);
+                    const refundAmount = getLedgerRefundAmount(inv, creditNotes);
 
                     const isRefunded = inv.paymentStatus === "refunded";
                     const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
@@ -948,25 +1025,25 @@ export default function ClientLedger() {
                                 </div>
                               ))}
                         </td>
-                        <td className="px-3 py-2.5 text-right text-slate-800 font-semibold whitespace-nowrap">
+                        <td className="px-2.5 py-2.5 text-right text-slate-800 font-semibold whitespace-nowrap">
                           {formatCurrency(inv.totalAmount, inv.currency ?? currency)}
                         </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                          {inv.refundAmount > 0
-                            ? <span className="text-blue-600 font-medium">{formatCurrency(inv.refundAmount, inv.currency ?? currency)}</span>
+                        <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
+                          {refundAmount > 0
+                            ? <span className="text-blue-600 font-medium">{formatCurrency(refundAmount, inv.currency ?? currency)}</span>
                             : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                        <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                           {penalty > 0
                             ? <span className="text-orange-600 font-medium">{formatCurrency(penalty, inv.currency ?? currency)}</span>
                             : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                        <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                           {inv.paidAmount > 0
                             ? <span className="text-emerald-600 font-semibold">{formatCurrency(inv.paidAmount, inv.currency ?? currency)}</span>
                             : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                        <td className="px-2.5 py-2.5 text-slate-500 whitespace-normal leading-snug">
                           {hasPaid ? fmtDate(inv.updatedAt) : <span className="text-slate-300">—</span>}
                         </td>
                         <td className="px-3 py-2.5 max-w-[180px]">

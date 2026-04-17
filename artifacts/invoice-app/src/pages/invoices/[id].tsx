@@ -73,6 +73,8 @@ export default function InvoiceDetail() {
       {
         onSuccess: (updatedInvoice) => {
           queryClient.setQueryData(getGetInvoiceQueryKey(invoiceId), updatedInvoice);
+          queryClient.invalidateQueries({ predicate: (query) => query.queryKey.some((part) => String(part).includes("/api/invoices")) });
+          queryClient.invalidateQueries({ predicate: (query) => query.queryKey.some((part) => String(part).includes("/api/credit-notes")) });
           toast({ title: "Payment Recorded", description: "Payment details saved successfully." });
           setIsPaymentModalOpen(false);
           setPaymentAmount("");
@@ -86,7 +88,7 @@ export default function InvoiceDetail() {
 
   const isUnpaidRefund = invoice.paymentStatus === "unpaid";
   const isPartialRefund = invoice.paymentStatus === "partial";
-  const refundBaseAmount = isUnpaidRefund ? 0 : invoice.paidAmount;
+  const refundBaseAmount = isUnpaidRefund ? invoice.totalAmount : invoice.paidAmount;
   const creditEligibleAmount = refundBaseAmount;
 
   const totalDeductionsInput = Number(cancellationCharges || 0) + Number(nonRefundableTaxes || 0) + Number(convenienceFeeDeduction || 0) + Number(otherRetainedCharges || 0);
@@ -124,6 +126,8 @@ export default function InvoiceDetail() {
       {
         onSuccess: (updatedInvoice) => {
           queryClient.setQueryData(getGetInvoiceQueryKey(invoiceId), updatedInvoice);
+          queryClient.invalidateQueries({ predicate: (query) => query.queryKey.some((part) => String(part).includes("/api/invoices")) });
+          queryClient.invalidateQueries({ predicate: (query) => query.queryKey.some((part) => String(part).includes("/api/credit-notes")) });
           const creditMsg = shouldAutoCreateCredit && createCreditNote ? " Credit note created." : "";
           const desc = isUnpaidRefund
             ? `Invoice settled to zero (no payment received).${creditMsg}`
