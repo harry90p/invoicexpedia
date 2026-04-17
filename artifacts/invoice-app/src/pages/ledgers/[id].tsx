@@ -559,11 +559,13 @@ export default function ClientLedger() {
         // Format date cells
         dataRow.getCell(1).numFmt = "dd-mmm-yyyy";
         dataRow.getCell(10).numFmt = "dd-mmm-yyyy";
+        dataRow.getCell(10).alignment = { horizontal: "center", vertical: "middle" };
 
         // Format numeric cells
         [6, 7, 8, 9, 13].forEach((col) => {
           dataRow.getCell(col).numFmt = "#,##0.00";
         });
+        dataRow.getCell(13).alignment = { horizontal: "right", vertical: "middle" };
 
         // Alternating row background
         if (idx % 2 === 1) {
@@ -926,19 +928,19 @@ export default function ClientLedger() {
             </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Date</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice No.</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Deal / Booking ID</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Vertical</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Type</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Description</span></th>
-                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Amount</span></th>
-                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Refund Amount</span></th>
-                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Penalty</span></th>
-                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Received</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Date</span></th>
-                <th className="text-left px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Remarks</span></th>
-                <th className="text-right px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Balance</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Date</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice No.</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Deal / Booking ID</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Vertical</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Type</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Description</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Invoice Amount</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Refund Amount</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Penalty</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Received</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Pymt Date</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Remarks</span></th>
+                <th className="text-center px-2.5 py-3 align-middle"><span className="block whitespace-normal break-words [overflow-wrap:anywhere] leading-tight">Balance</span></th>
               </tr>
             </thead>
             <tbody>
@@ -1031,19 +1033,19 @@ export default function ClientLedger() {
                         <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                           {refundAmount > 0
                             ? <span className="text-blue-600 font-medium">{formatCurrency(refundAmount, inv.currency ?? currency)}</span>
-                            : <span className="text-slate-300">—</span>}
+                            : <span className="text-slate-400">{formatCurrency(0, inv.currency ?? currency)}</span>}
                         </td>
                         <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                           {penalty > 0
                             ? <span className="text-orange-600 font-medium">{formatCurrency(penalty, inv.currency ?? currency)}</span>
-                            : <span className="text-slate-300">—</span>}
+                            : <span className="text-slate-400">{formatCurrency(0, inv.currency ?? currency)}</span>}
                         </td>
                         <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
                           {inv.paidAmount > 0
                             ? <span className="text-emerald-600 font-semibold">{formatCurrency(inv.paidAmount, inv.currency ?? currency)}</span>
-                            : <span className="text-slate-300">—</span>}
+                            : <span className="text-slate-400">{formatCurrency(0, inv.currency ?? currency)}</span>}
                         </td>
-                        <td className="px-2.5 py-2.5 text-slate-500 whitespace-normal leading-snug">
+                        <td className="px-2.5 py-2.5 text-slate-500 whitespace-normal leading-snug text-center">
                           {hasPaid ? fmtDate(inv.updatedAt) : <span className="text-slate-300">—</span>}
                         </td>
                         <td className="px-3 py-2.5 max-w-[180px]">
@@ -1054,10 +1056,12 @@ export default function ClientLedger() {
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className={`px-3 py-2.5 text-right font-bold whitespace-nowrap ${balance > 0 ? "text-amber-700" : balance < 0 ? "text-emerald-700" : "text-slate-400"}`}>
-                          {balance === 0
-                            ? "Nil"
-                            : formatCurrency(Math.abs(balance), inv.currency ?? currency)}
+                        <td className={`px-3 py-2.5 font-bold whitespace-nowrap ${balance > 0 ? "text-amber-700" : balance < 0 ? "text-emerald-700" : "text-slate-400"}`}>
+                          <div className="text-right">
+                            {balance === 0
+                              ? formatCurrency(0, inv.currency ?? currency)
+                              : formatCurrency(Math.abs(balance), inv.currency ?? currency)}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1071,17 +1075,17 @@ export default function ClientLedger() {
                     {formatCurrency(totalInvoiced, currency)}
                   </td>
                   <td className="px-3 py-3 text-right font-bold text-blue-600 text-xs whitespace-nowrap">
-                    {totalRefunded > 0 ? formatCurrency(totalRefunded, currency) : "—"}
+                    {formatCurrency(totalRefunded, currency)}
                   </td>
                   <td className="px-3 py-3 text-right font-bold text-orange-600 text-xs whitespace-nowrap">
-                    {totalPenalty > 0 ? formatCurrency(totalPenalty, currency) : "—"}
+                    {formatCurrency(totalPenalty, currency)}
                   </td>
                   <td className="px-3 py-3 text-right font-bold text-emerald-700 text-xs whitespace-nowrap">
                     {formatCurrency(totalPaid, currency)}
                   </td>
                   <td colSpan={2} />
                   <td className={`px-3 py-3 text-right font-bold text-xs whitespace-nowrap ${outstanding > 0 ? "text-amber-700" : "text-emerald-700"}`}>
-                    {outstanding === 0 ? "Nil" : formatCurrency(outstanding, currency)}
+                    {formatCurrency(outstanding, currency)}
                   </td>
                 </tr>
               </tfoot>
@@ -1102,13 +1106,13 @@ export default function ClientLedger() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400 font-semibold">
-                  <th className="text-left px-5 py-3">Credit Note #</th>
-                  <th className="text-left px-5 py-3">Linked Invoice</th>
-                  <th className="text-left px-5 py-3">Type</th>
-                  <th className="text-left px-5 py-3">Description</th>
-                  <th className="text-right px-5 py-3">Amount</th>
-                  <th className="text-right px-5 py-3">Used</th>
-                  <th className="text-right px-5 py-3">Remaining</th>
+                  <th className="text-center px-5 py-3">Credit Note #</th>
+                  <th className="text-center px-5 py-3">Linked Invoice</th>
+                  <th className="text-center px-5 py-3">Type</th>
+                  <th className="text-center px-5 py-3">Description</th>
+                  <th className="text-center px-5 py-3">Amount</th>
+                  <th className="text-center px-5 py-3">Used</th>
+                  <th className="text-center px-5 py-3">Remaining</th>
                   <th className="text-center px-5 py-3">Status</th>
                 </tr>
               </thead>

@@ -32,7 +32,6 @@ export default function InvoiceDetail() {
 
   // Record Payment state
   const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<"paid" | "partial">("paid");
   const [paymentModeOfPayment, setPaymentModeOfPayment] = useState<string>("");
   const [convenienceFeeAmount, setConvenienceFeeAmount] = useState<string>("");
   const [convenienceFeeRefundable, setConvenienceFeeRefundable] = useState<"non_refundable" | "refundable">("non_refundable");
@@ -59,9 +58,11 @@ export default function InvoiceDetail() {
   }
 
   const handleRecordPayment = () => {
+    const amt = Number(paymentAmount);
+    const derivedStatus: "paid" | "partial" = amt >= (invoice?.outstandingBalance ?? 0) ? "paid" : "partial";
     const data: Parameters<typeof recordPayment.mutate>[0]["data"] = {
-      amount: Number(paymentAmount),
-      paymentStatus,
+      amount: amt,
+      paymentStatus: derivedStatus,
     };
     if (paymentModeOfPayment) (data as Record<string, unknown>).modeOfPayment = paymentModeOfPayment;
     if (paymentModeOfPayment === "card" && convenienceFeeAmount) {
@@ -389,16 +390,22 @@ export default function InvoiceDetail() {
                       )}
                     </>
                   )}
-                  <div className="space-y-2">
-                    <Label>Payment Status</Label>
-                    <Select value={paymentStatus} onValueChange={(val: "paid" | "partial") => setPaymentStatus(val)}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="paid">Fully Paid</SelectItem>
-                        <SelectItem value="partial">Partial Payment</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {paymentAmount && Number(paymentAmount) > 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Payment Status</Label>
+                      <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium ${
+                        Number(paymentAmount) >= invoice.outstandingBalance
+                          ? "bg-green-100 text-green-800"
+                          : "bg-amber-100 text-amber-800"
+                      }`}>
+                        <span className={`w-2 h-2 rounded-full ${
+                          Number(paymentAmount) >= invoice.outstandingBalance ? "bg-green-600" : "bg-amber-500"
+                        }`} />
+                        {Number(paymentAmount) >= invoice.outstandingBalance ? "Fully Paid" : "Partial Payment"}
+                      </div>
+                      <p className="text-xs text-muted-foreground">Auto-determined from payment amount</p>
+                    </div>
+                  )}
                   <Button onClick={handleRecordPayment} className="w-full bg-green-600 hover:bg-green-700"
                     disabled={!paymentAmount || recordPayment.isPending}>
                     Save Payment
@@ -1064,19 +1071,29 @@ export default function InvoiceDetail() {
 
                         <div>
                           <div className="text-xs text-amber-600 font-bold uppercase mb-2">Deductions (Retained)</div>
-                          <div className="flex justify-between py-1.5 border-b border-purple-100">
-                            <span className="text-slate-600">Cancellation Charges</span>
-                            <span className="font-semibold text-amber-700">{formatCurrency(cancCharges, invoice.currency)}</span>
-                          </div>
-                          <div className="flex justify-between py-1.5 border-b border-purple-100">
-                            <span className="text-slate-600">Non-Refundable Charges</span>
-                            <span className="font-semibold text-amber-700">{formatCurrency(otherCharges, invoice.currency)}</span>
-                          </div>
-                          {totalDeductions > 0 && (
-                            <div className="flex justify-between py-1.5">
-                              <span className="text-slate-500 text-xs">Total Deductions</span>
-                              <span className="text-xs font-semibold text-amber-800">{formatCurrency(totalDeductions, invoice.currency)}</span>
+                          {totalDeductions === 0 ? (
+                            <div className="flex items-center gap-2 py-3 text-sm text-slate-400 italic">
+                              <span>No deductions for this refund!</span>
                             </div>
+                          ) : (
+                            <>
+                              {cancCharges > 0 && (
+                                <div className="flex justify-between py-1.5 border-b border-purple-100">
+                                  <span className="text-slate-600">Cancellation Charges</span>
+                                  <span className="font-semibold text-amber-700">{formatCurrency(cancCharges, invoice.currency)}</span>
+                                </div>
+                              )}
+                              {otherCharges > 0 && (
+                                <div className="flex justify-between py-1.5 border-b border-purple-100">
+                                  <span className="text-slate-600">Non-Refundable Charges</span>
+                                  <span className="font-semibold text-amber-700">{formatCurrency(otherCharges, invoice.currency)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between py-1.5">
+                                <span className="text-slate-500 text-xs">Total Deductions</span>
+                                <span className="text-xs font-semibold text-amber-800">{formatCurrency(totalDeductions, invoice.currency)}</span>
+                              </div>
+                            </>
                           )}
                         </div>
                       </div>

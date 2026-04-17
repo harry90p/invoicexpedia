@@ -209,6 +209,7 @@ const styles = StyleSheet.create({
     fontFamily: "Helvetica-Bold",
     color: C.white,
     lineHeight: 1.1,
+    textAlign: "center",
   },
   tableRow: {
     flexDirection: "row",
@@ -332,13 +333,12 @@ function fmtDate(str: string | null | undefined) {
 }
 
 function fmtAmt(val: number, cur: string) {
-  if (!val || val === 0) return "—";
   return new Intl.NumberFormat("en-PK", {
     style: "currency",
     currency: cur,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(val);
+  }).format(val || 0);
 }
 
 export interface LedgerRow {
@@ -427,7 +427,7 @@ export default function LedgerPDF({
   const colPayDate = 62;
   const colRemarks = 70;
   const colBal = 64;
-  const rightHeader = [styles.tableHeaderText, { textAlign: "right" as const }];
+  const rightHeader = [styles.tableHeaderText, { textAlign: "center" as const }];
   const rightMuted = [styles.cellTextGray, { textAlign: "right" as const }];
 
   return (
@@ -494,21 +494,21 @@ export default function LedgerPDF({
           </View>
           <View style={styles.summaryBox}>
             <Text style={styles.summaryLabel}>Total Refunded</Text>
-            <Text style={styles.summaryValueBlue}>{totals.refunded > 0 ? fmtAmt(totals.refunded, cur) : "—"}</Text>
+            <Text style={styles.summaryValueBlue}>{fmtAmt(totals.refunded, cur)}</Text>
           </View>
           <View style={styles.summaryBox}>
             <Text style={styles.summaryLabel}>Penalty</Text>
-            <Text style={styles.summaryValue}>{totals.penalty > 0 ? fmtAmt(totals.penalty, cur) : "—"}</Text>
+            <Text style={styles.summaryValue}>{fmtAmt(totals.penalty, cur)}</Text>
           </View>
           <View style={styles.summaryBox}>
             <Text style={styles.summaryLabel}>Outstanding</Text>
             <Text style={totals.outstanding > 0 ? styles.summaryValueEmber : styles.summaryValueEmerald}>
-              {totals.outstanding === 0 ? "Nil" : fmtAmt(totals.outstanding, cur)}
+              {fmtAmt(totals.outstanding, cur)}
             </Text>
           </View>
           <View style={styles.summaryBox}>
             <Text style={styles.summaryLabel}>Credit Notes</Text>
-            <Text style={styles.summaryValue}>{totals.availableCredit > 0 ? fmtAmt(totals.availableCredit, cur) : "—"}</Text>
+            <Text style={styles.summaryValue}>{fmtAmt(totals.availableCredit, cur)}</Text>
           </View>
         </View>
 
@@ -590,21 +590,21 @@ export default function LedgerPDF({
               </View>
               <View style={{ width: colRefund, overflow: "hidden" }}>
                 <Text style={row.refundAmount > 0 ? styles.cellTextBlue : rightMuted}>
-                  {row.refundAmount > 0 ? fmtAmt(row.refundAmount, cur) : "—"}
+                  {fmtAmt(row.refundAmount, cur)}
                 </Text>
               </View>
               <View style={{ width: colPenalty, overflow: "hidden" }}>
                 <Text style={row.penalty > 0 ? styles.cellTextOrange : rightMuted}>
-                  {row.penalty > 0 ? fmtAmt(row.penalty, cur) : "—"}
+                  {fmtAmt(row.penalty, cur)}
                 </Text>
               </View>
               <View style={{ width: colPaid, overflow: "hidden" }}>
                 <Text style={row.paidAmount > 0 ? styles.cellTextEmerald : rightMuted}>
-                  {row.paidAmount > 0 ? fmtAmt(row.paidAmount, cur) : "—"}
+                  {fmtAmt(row.paidAmount, cur)}
                 </Text>
               </View>
               <View style={{ width: colPayDate, overflow: "hidden" }}>
-                <Text style={styles.cellTextGray}>{row.paymentDate ? fmtDate(row.paymentDate) : "—"}</Text>
+                <Text style={[styles.cellTextGray, { textAlign: "center" }]}>{row.paymentDate ? fmtDate(row.paymentDate) : "—"}</Text>
               </View>
               {/* Remarks: wraps for long notes */}
               <View style={{ width: colRemarks }}>
@@ -612,9 +612,11 @@ export default function LedgerPDF({
               </View>
               <View style={{ width: colBal, overflow: "hidden" }}>
                 <Text style={
-                  row.balance > 0 ? styles.cellTextAmber : row.balance < 0 ? styles.cellTextEmerald : styles.cellTextGray
+                  row.balance > 0 ? styles.cellTextAmber
+                  : row.balance < 0 ? styles.cellTextEmerald
+                  : [styles.cellTextGray, { textAlign: "right" as const }]
                 }>
-                  {row.balance === 0 ? "Nil" : fmtAmt(Math.abs(row.balance), cur)}
+                  {fmtAmt(Math.abs(row.balance), cur)}
                 </Text>
               </View>
             </View>
@@ -633,10 +635,10 @@ export default function LedgerPDF({
             <Text style={styles.totalsValue}>{fmtAmt(totals.invoiced, cur)}</Text>
           </View>
           <View style={{ width: colRefund, overflow: "hidden" }}>
-            <Text style={styles.totalsValue}>{totals.refunded > 0 ? fmtAmt(totals.refunded, cur) : "—"}</Text>
+            <Text style={styles.totalsValue}>{fmtAmt(totals.refunded, cur)}</Text>
           </View>
           <View style={{ width: colPenalty, overflow: "hidden" }}>
-            <Text style={styles.totalsValue}>{totals.penalty > 0 ? fmtAmt(totals.penalty, cur) : "—"}</Text>
+            <Text style={styles.totalsValue}>{fmtAmt(totals.penalty, cur)}</Text>
           </View>
           <View style={{ width: colPaid, overflow: "hidden" }}>
             <Text style={styles.totalsValue}>{fmtAmt(totals.paid, cur)}</Text>
@@ -646,7 +648,7 @@ export default function LedgerPDF({
           </View>
           <View style={{ width: colBal, overflow: "hidden" }}>
             <Text style={styles.totalsValue}>
-              {totals.outstanding === 0 ? "Nil" : fmtAmt(totals.outstanding, cur)}
+              {fmtAmt(totals.outstanding, cur)}
             </Text>
           </View>
         </View>
@@ -672,7 +674,7 @@ export default function LedgerPDF({
                 <Text style={[styles.cellText, { width: 80 }]}>{cn.type.replace(/_/g, " ")}</Text>
                 <Text style={[styles.cellTextGray, { flex: 1 }]} numberOfLines={1}>{cn.description || "—"}</Text>
                 <Text style={[styles.cellTextRightBold, { width: 70 }]}>{fmtAmt(cn.amount, cn.currency)}</Text>
-                <Text style={[styles.cellTextGray, { width: 60, textAlign: "right" }]}>{cn.usedAmount > 0 ? fmtAmt(cn.usedAmount, cn.currency) : "—"}</Text>
+                <Text style={[styles.cellTextGray, { width: 60, textAlign: "right" }]}>{fmtAmt(cn.usedAmount, cn.currency)}</Text>
                 <Text style={[styles.cellTextRightBold, { width: 70 }]}>{fmtAmt(cn.remainingAmount, cn.currency)}</Text>
                 <Text style={[styles.cellText, { width: 50, textAlign: "center" }]}>{cn.status}</Text>
               </View>

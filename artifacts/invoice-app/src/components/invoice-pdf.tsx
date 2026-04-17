@@ -1247,19 +1247,29 @@ export default function InvoicePDF({ invoice }: { invoice: InvoiceData }) {
                 {/* Right: deductions */}
                 <View style={styles.refundColRight}>
                   <Text style={[styles.refundColTitle, styles.refundColTitleAmber]}>Deductions (Retained)</Text>
-                  <View style={styles.refundRow}>
-                    <Text style={styles.refundRowLabel}>Cancellation Charges</Text>
-                    <Text style={[styles.refundRowValue, styles.refundRowValueAmber]}>{cur} {fmt(cancCharges, cur)}</Text>
-                  </View>
-                  <View style={styles.refundRow}>
-                    <Text style={styles.refundRowLabel}>Non-Refundable Charges</Text>
-                    <Text style={[styles.refundRowValue, styles.refundRowValueAmber]}>{cur} {fmt(otherCharges, cur)}</Text>
-                  </View>
-                  {totalDeductions > 0 && (
-                    <View style={[styles.refundRow, { borderBottomWidth: 0, marginTop: 2 }]}>
-                      <Text style={[styles.refundRowLabel, { fontSize: 7, color: "#b45309" }]}>Total Deductions</Text>
-                      <Text style={[styles.refundRowValue, styles.refundRowValueAmber, { fontSize: 7 }]}>{cur} {fmt(totalDeductions, cur)}</Text>
-                    </View>
+                  {totalDeductions === 0 ? (
+                    <Text style={{ fontSize: 7, color: "#94a3b8", fontStyle: "italic", marginTop: 4 }}>
+                      No deductions for this refund!
+                    </Text>
+                  ) : (
+                    <>
+                      {cancCharges > 0 && (
+                        <View style={styles.refundRow}>
+                          <Text style={styles.refundRowLabel}>Cancellation Charges</Text>
+                          <Text style={[styles.refundRowValue, styles.refundRowValueAmber]}>{cur} {fmt(cancCharges, cur)}</Text>
+                        </View>
+                      )}
+                      {otherCharges > 0 && (
+                        <View style={styles.refundRow}>
+                          <Text style={styles.refundRowLabel}>Non-Refundable Charges</Text>
+                          <Text style={[styles.refundRowValue, styles.refundRowValueAmber]}>{cur} {fmt(otherCharges, cur)}</Text>
+                        </View>
+                      )}
+                      <View style={[styles.refundRow, { borderBottomWidth: 0, marginTop: 2 }]}>
+                        <Text style={[styles.refundRowLabel, { fontSize: 7, color: "#b45309" }]}>Total Deductions</Text>
+                        <Text style={[styles.refundRowValue, styles.refundRowValueAmber, { fontSize: 7 }]}>{cur} {fmt(totalDeductions, cur)}</Text>
+                      </View>
+                    </>
                   )}
                 </View>
               </View>
