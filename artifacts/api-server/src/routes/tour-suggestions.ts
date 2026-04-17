@@ -4,6 +4,11 @@ import { openai } from "@workspace/integrations-openai-ai-server";
 const router = Router();
 
 router.post("/tour-suggestions", async (req, res) => {
+  if (!openai) {
+    res.status(503).json({ error: "AI integration is not configured." });
+    return;
+  }
+
   const { tourName } = req.body as { tourName?: string };
 
   if (!tourName || tourName.trim().length < 3) {

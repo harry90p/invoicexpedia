@@ -1,13 +1,21 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import {
   useGetClient,
   useListInvoices,
+  useGetSettings,
   type Invoice,
 } from "@workspace/api-client-react";
 import { useListCreditNotes, type CreditNote } from "@workspace/api-client-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   ArrowLeft,
   Building2,
@@ -16,14 +24,27 @@ import {
   CheckCircle2,
   Clock,
   Receipt,
-  Wallet,
   BookOpen,
   CreditCard,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/format";
+import { pdf } from "@react-pdf/renderer";
+import LedgerPDF, { type LedgerRow, type CreditNoteRow } from "@/components/ledger-pdf";
+import ExcelJS from "exceljs";
 
 function fmtDate(str: string | null | undefined) {
   if (!str) return "—";
+  return new Date(str).toLocaleDateString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function fmtDateShort(str: string | null | undefined) {
+  if (!str) return "";
   return new Date(str).toLocaleDateString("en-PK", {
     day: "2-digit",
     month: "short",
@@ -180,9 +201,43 @@ function rowBalance(inv: Invoice): number {
   return inv.outstandingBalance ?? 0;
 }
 
+function buildLedgerRows(invoices: Invoice[], runningBalances: number[]): LedgerRow[] {
+  return invoices.map((inv, idx) => {
+    const raw = inv as unknown as Record<string, unknown>;
+    const cancellationCharges = (raw.cancellationCharges as number) ?? 0;
+    const otherRetained = (raw.otherRetainedCharges as number) ?? 0;
+    const penalty = cancellationCharges + otherRetained;
+    const mop = raw.modeOfPayment as string | undefined;
+    const refMop = raw.refundModeOfPayment as string | undefined;
+    const dealBookingId = (raw.dealBookingId as string | undefined) || (raw.purchaseOrder as string | undefined);
+    const descLines = buildDescriptionLines(inv);
+    const activeMop = inv.paymentStatus === "refunded" && !mop ? refMop : mop;
+    const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
+
+    return {
+      id: inv.id,
+      invoiceDate: inv.invoiceDate,
+      invoiceNumber: inv.invoiceNumber,
+      dealBookingId: dealBookingId || "",
+      category: inv.category,
+      description: descLines.join(" | "),
+      totalAmount: inv.totalAmount ?? 0,
+      refundAmount: inv.refundAmount ?? 0,
+      penalty,
+      paidAmount: inv.paidAmount ?? 0,
+      paymentDate: hasPaid ? inv.updatedAt : undefined,
+      modeOfPayment: activeMop,
+      notes: (raw.notes as string | undefined) || undefined,
+      balance: runningBalances[idx] ?? 0,
+      paymentStatus: inv.paymentStatus,
+    };
+  });
+}
+
 export default function ClientLedger() {
   const { id } = useParams<{ id: string }>();
   const clientId = Number(id);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const { data: client, isLoading: clientLoading } = useGetClient(clientId, {
     query: { enabled: !!clientId },
@@ -192,6 +247,7 @@ export default function ClientLedger() {
     limit: 10000,
   });
   const { data: creditNotesData, isLoading: cnLoading } = useListCreditNotes({ clientId });
+  const { data: settings } = useGetSettings();
 
   const currency = client?.currency ?? "PKR";
   const creditLimit = client?.creditLimit ?? 0;
@@ -235,6 +291,400 @@ export default function ClientLedger() {
   const isOverLimit = creditLimit > 0 && outstanding > creditLimit;
   const isLoading = clientLoading || invoicesLoading || cnLoading;
 
+  const clientType = (client as unknown as Record<string, string>)?.clientType;
+  const isCorporate = clientType !== "private";
+
+  const totals = {
+    invoiced: totalInvoiced,
+    paid: totalPaid,
+    refunded: totalRefunded,
+    penalty: totalPenalty,
+    outstanding,
+    availableCredit,
+  };
+
+  const settingsData = {
+    companyName: settings?.companyName ?? "",
+    companyAddress: settings?.companyAddress ?? "",
+    companyPhone: settings?.companyPhone ?? "",
+    companyNtn: settings?.companyNtn ?? "",
+    companySNtn: settings?.companySNtn ?? "",
+    logoUrl: settings?.logoUrl ?? "",
+  };
+
+  const generatedAt = new Date().toLocaleDateString("en-PK", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  const handleDownloadPDF = async () => {
+    setIsDownloading(true);
+    try {
+      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      const cnRows: CreditNoteRow[] = creditNotes.map((cn) => ({
+        creditNoteNumber: cn.creditNoteNumber,
+        invoiceNumber: cn.invoiceNumber ?? undefined,
+        type: cn.type,
+        description: cn.description ?? undefined,
+        amount: cn.amount,
+        usedAmount: cn.usedAmount,
+        remainingAmount: cn.remainingAmount,
+        status: cn.status,
+        currency: cn.currency,
+      }));
+
+      const doc = (
+        <LedgerPDF
+          clientName={client?.name ?? "Client"}
+          clientType={clientType ?? "corporate"}
+          currency={currency}
+          creditLimit={creditLimit}
+          creditCycleDays={creditCycleDays}
+          rows={ledgerRows}
+          creditNotes={cnRows}
+          totals={totals}
+          settings={settingsData}
+          generatedAt={generatedAt}
+        />
+      );
+      const blob = await pdf(doc).toBlob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Ledger_${client?.name?.replace(/\s+/g, "_") ?? clientId}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadXLSX = async () => {
+    setIsDownloading(true);
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = settingsData.companyName || "Ledger";
+      workbook.created = new Date();
+
+      const ws = workbook.addWorksheet("Ledger");
+      const accent = "003366";
+      const headerFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + accent } };
+      const headerFont: Partial<ExcelJS.Font> = { color: { argb: "FFFFFFFF" }, bold: true, size: 9 };
+      const boldFont: Partial<ExcelJS.Font> = { bold: true };
+
+      // ── Company header block ──
+      ws.mergeCells("A1:M1");
+      ws.getCell("A1").value = isCorporate ? "CORPORATE LEDGER" : "LEDGER";
+      ws.getCell("A1").font = { bold: true, size: 16, color: { argb: "FF" + accent } };
+      ws.getCell("A1").alignment = { horizontal: "center" };
+
+      if (settingsData.companyName) {
+        ws.mergeCells("A2:M2");
+        ws.getCell("A2").value = settingsData.companyName;
+        ws.getCell("A2").font = { bold: true, size: 11 };
+        ws.getCell("A2").alignment = { horizontal: "center" };
+      }
+
+      let headerRow = 3;
+      if (settingsData.companyAddress) {
+        ws.mergeCells(`A${headerRow}:M${headerRow}`);
+        ws.getCell(`A${headerRow}`).value = settingsData.companyAddress;
+        ws.getCell(`A${headerRow}`).alignment = { horizontal: "center" };
+        headerRow++;
+      }
+      if (settingsData.companyPhone) {
+        ws.mergeCells(`A${headerRow}:M${headerRow}`);
+        ws.getCell(`A${headerRow}`).value = settingsData.companyPhone;
+        ws.getCell(`A${headerRow}`).alignment = { horizontal: "center" };
+        headerRow++;
+      }
+      if (settingsData.companyNtn) {
+        ws.mergeCells(`A${headerRow}:M${headerRow}`);
+        ws.getCell(`A${headerRow}`).value = `NTN: ${settingsData.companyNtn}${settingsData.companySNtn ? `  |  SNTN: ${settingsData.companySNtn}` : ""}`;
+        ws.getCell(`A${headerRow}`).alignment = { horizontal: "center" };
+        headerRow++;
+      }
+
+      headerRow++; // blank line
+
+      // ── Client info ──
+      ws.getCell(`A${headerRow}`).value = "Client:";
+      ws.getCell(`A${headerRow}`).font = boldFont;
+      ws.getCell(`B${headerRow}`).value = client?.name ?? "";
+      ws.getCell(`B${headerRow}`).font = boldFont;
+      ws.getCell(`G${headerRow}`).value = "Type:";
+      ws.getCell(`H${headerRow}`).value = isCorporate ? "Corporate" : "Private";
+      headerRow++;
+
+      ws.getCell(`A${headerRow}`).value = "Currency:";
+      ws.getCell(`B${headerRow}`).value = currency;
+      ws.getCell(`G${headerRow}`).value = "Generated:";
+      ws.getCell(`H${headerRow}`).value = generatedAt;
+      headerRow++;
+
+      if (creditLimit > 0) {
+        ws.getCell(`A${headerRow}`).value = "Credit Limit:";
+        ws.getCell(`B${headerRow}`).value = creditLimit;
+        ws.getCell(`G${headerRow}`).value = "Credit Cycle:";
+        ws.getCell(`H${headerRow}`).value = creditCycleDays > 0 ? `${creditCycleDays} days` : "—";
+        headerRow++;
+      }
+
+      headerRow++; // blank line
+
+      // ── Summary ──
+      ws.getCell(`A${headerRow}`).value = "SUMMARY";
+      ws.getCell(`A${headerRow}`).font = { bold: true, size: 10, color: { argb: "FF" + accent } };
+      headerRow++;
+
+      const summaryHeaders = ["Total Invoiced", "Total Paid", "Total Refunded", "Penalty", "Outstanding", "Available Credit"];
+      const summaryValues = [totals.invoiced, totals.paid, totals.refunded, totals.penalty, totals.outstanding, totals.availableCredit];
+      summaryHeaders.forEach((h, i) => {
+        const col = String.fromCharCode(65 + i * 2); // A, C, E, G, I, K
+        const col2 = String.fromCharCode(65 + i * 2 + 1);
+        ws.getCell(`${col}${headerRow}`).value = h;
+        ws.getCell(`${col}${headerRow}`).font = { bold: true, size: 8, color: { argb: "FF9E9EB8" } };
+        ws.getCell(`${col2}${headerRow}`).value = summaryValues[i];
+        ws.getCell(`${col2}${headerRow}`).numFmt = `#,##0.00`;
+        ws.getCell(`${col2}${headerRow}`).font = boldFont;
+      });
+      headerRow += 2;
+
+      // ── Transaction table ──
+      ws.getCell(`A${headerRow}`).value = "TRANSACTION LEDGER";
+      ws.getCell(`A${headerRow}`).font = { bold: true, size: 10, color: { argb: "FF" + accent } };
+      headerRow++;
+
+      const tableHeaders = [
+        "Invoice Date", "Invoice No.", "Deal / Booking ID", "Vertical",
+        "Description", "Invoice Amount", "Refund Amount", "Penalty",
+        "Pymt Received", "Payment Date", "Remarks", "Status", "Balance",
+      ];
+      const colWidths = [15, 14, 18, 14, 30, 16, 15, 14, 15, 14, 18, 12, 15];
+
+      const hRow = ws.addRow(tableHeaders);
+      hRow.eachCell((cell) => {
+        cell.fill = headerFill;
+        cell.font = headerFont;
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          bottom: { style: "thin", color: { argb: "FFFFFFFF" } },
+        };
+      });
+
+      ws.columns = tableHeaders.map((_, i) => ({ width: colWidths[i] }));
+
+      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      ledgerRows.forEach((row, idx) => {
+        const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
+        const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
+        const dataRow = ws.addRow([
+          row.invoiceDate ? new Date(row.invoiceDate) : "",
+          row.invoiceNumber,
+          row.dealBookingId || "",
+          row.category ? (VERTICAL_LABELS[row.category] ?? row.category) : "",
+          row.description,
+          row.totalAmount,
+          row.refundAmount || 0,
+          row.penalty || 0,
+          row.paidAmount || 0,
+          row.paymentDate ? new Date(row.paymentDate) : "",
+          remarksLabel,
+          row.paymentStatus,
+          row.balance,
+        ]);
+
+        // Format date cells
+        dataRow.getCell(1).numFmt = "dd-mmm-yyyy";
+        dataRow.getCell(10).numFmt = "dd-mmm-yyyy";
+
+        // Format numeric cells
+        [6, 7, 8, 9, 13].forEach((col) => {
+          dataRow.getCell(col).numFmt = "#,##0.00";
+        });
+
+        // Alternating row background
+        if (idx % 2 === 1) {
+          dataRow.eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9F9FC" } };
+          });
+        }
+        if (row.paymentStatus === "refunded") {
+          dataRow.eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF6FF" } };
+          });
+        }
+
+        // Color balance
+        const balCell = dataRow.getCell(13);
+        if (row.balance > 0) balCell.font = { color: { argb: "FF92400E" }, bold: true };
+        else if (row.balance < 0) balCell.font = { color: { argb: "FF065F46" }, bold: true };
+
+        // Color refund
+        const refCell = dataRow.getCell(7);
+        if (row.refundAmount > 0) refCell.font = { color: { argb: "FF1E40AF" }, bold: true };
+      });
+
+      // Totals row
+      const totalsRowData = ws.addRow([
+        "TOTALS", "", "", "", `${ledgerRows.length} invoice${ledgerRows.length !== 1 ? "s" : ""}`,
+        totals.invoiced, totals.refunded, totals.penalty, totals.paid, "", "", "",
+        totals.outstanding,
+      ]);
+      totalsRowData.eachCell((cell) => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6ECF5" } };
+        cell.font = { bold: true, color: { argb: "FF" + accent } };
+      });
+      [6, 7, 8, 9, 13].forEach((col) => {
+        totalsRowData.getCell(col).numFmt = "#,##0.00";
+      });
+
+      // ── Credit Notes sheet ──
+      if (creditNotes.length > 0) {
+        const cnWs = workbook.addWorksheet("Credit Notes");
+        cnWs.columns = [
+          { header: "Credit Note #", key: "creditNoteNumber", width: 18 },
+          { header: "Linked Invoice", key: "invoiceNumber", width: 16 },
+          { header: "Type", key: "type", width: 20 },
+          { header: "Description", key: "description", width: 35 },
+          { header: "Amount", key: "amount", width: 14 },
+          { header: "Used", key: "usedAmount", width: 14 },
+          { header: "Remaining", key: "remainingAmount", width: 14 },
+          { header: "Status", key: "status", width: 12 },
+        ];
+        const cnHeader = cnWs.getRow(1);
+        cnHeader.eachCell((cell) => {
+          cell.fill = headerFill;
+          cell.font = headerFont;
+          cell.alignment = { horizontal: "center" };
+        });
+        creditNotes.forEach((cn) => {
+          const row = cnWs.addRow({
+            creditNoteNumber: cn.creditNoteNumber,
+            invoiceNumber: cn.invoiceNumber ?? "",
+            type: cn.type.replace(/_/g, " "),
+            description: cn.description ?? "",
+            amount: cn.amount,
+            usedAmount: cn.usedAmount,
+            remainingAmount: cn.remainingAmount,
+            status: cn.status,
+          });
+          [5, 6, 7].forEach((col) => { row.getCell(col).numFmt = "#,##0.00"; });
+        });
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Ledger_${client?.name?.replace(/\s+/g, "_") ?? clientId}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownloadCSV = () => {
+    setIsDownloading(true);
+    try {
+      const escCSV = (v: string | number | undefined | null) => {
+        const s = String(v ?? "");
+        if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+
+      const lines: string[] = [];
+
+      // Header info
+      lines.push(escCSV(isCorporate ? "CORPORATE LEDGER" : "LEDGER"));
+      if (settingsData.companyName) lines.push(escCSV(settingsData.companyName));
+      if (settingsData.companyAddress) lines.push(escCSV(settingsData.companyAddress));
+      if (settingsData.companyPhone) lines.push(escCSV(settingsData.companyPhone));
+      lines.push("");
+
+      // Client info
+      lines.push(`Client,${escCSV(client?.name ?? "")},Type,${isCorporate ? "Corporate" : "Private"}`);
+      lines.push(`Currency,${currency},Generated,${generatedAt}`);
+      if (creditLimit > 0) lines.push(`Credit Limit,${creditLimit},Cycle,${creditCycleDays > 0 ? creditCycleDays + " days" : "—"}`);
+      lines.push("");
+
+      // Summary
+      lines.push("SUMMARY");
+      lines.push("Total Invoiced,Total Paid,Total Refunded,Penalty,Outstanding,Available Credit");
+      lines.push(`${totals.invoiced},${totals.paid},${totals.refunded},${totals.penalty},${totals.outstanding},${totals.availableCredit}`);
+      lines.push("");
+
+      // Transaction table
+      lines.push("TRANSACTION LEDGER");
+      lines.push([
+        "Invoice Date", "Invoice No.", "Deal / Booking ID", "Vertical",
+        "Description", "Invoice Amount", "Refund Amount", "Penalty",
+        "Pymt Received", "Payment Date", "Remarks", "Status", "Balance",
+      ].map(escCSV).join(","));
+
+      const ledgerRows = buildLedgerRows(invoices, runningBalances);
+      ledgerRows.forEach((row) => {
+        const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
+        const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
+        lines.push([
+          fmtDateShort(row.invoiceDate),
+          row.invoiceNumber,
+          row.dealBookingId || "",
+          row.category ? (VERTICAL_LABELS[row.category] ?? row.category) : "",
+          row.description,
+          row.totalAmount,
+          row.refundAmount || 0,
+          row.penalty || 0,
+          row.paidAmount || 0,
+          row.paymentDate ? fmtDateShort(row.paymentDate) : "",
+          remarksLabel,
+          row.paymentStatus,
+          row.balance,
+        ].map(escCSV).join(","));
+      });
+
+      // Totals
+      lines.push([
+        "TOTALS", "", "", "", `${ledgerRows.length} invoices`,
+        totals.invoiced, totals.refunded, totals.penalty, totals.paid, "", "", "",
+        totals.outstanding,
+      ].map(escCSV).join(","));
+
+      // Credit notes
+      if (creditNotes.length > 0) {
+        lines.push("");
+        lines.push("CREDIT NOTES");
+        lines.push(["Credit Note #", "Linked Invoice", "Type", "Description", "Amount", "Used", "Remaining", "Status"].map(escCSV).join(","));
+        creditNotes.forEach((cn) => {
+          lines.push([
+            cn.creditNoteNumber,
+            cn.invoiceNumber ?? "",
+            cn.type.replace(/_/g, " "),
+            cn.description ?? "",
+            cn.amount,
+            cn.usedAmount,
+            cn.remainingAmount,
+            cn.status,
+          ].map(escCSV).join(","));
+        });
+      }
+
+      const csv = lines.join("\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Ledger_${client?.name?.replace(/\s+/g, "_") ?? clientId}.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   if (!isLoading && !client) {
     return (
       <div className="text-center py-16 text-slate-400">
@@ -246,9 +696,6 @@ export default function ClientLedger() {
       </div>
     );
   }
-
-  const clientType = (client as unknown as Record<string, string>)?.clientType;
-  const isCorporate = clientType !== "private";
 
   return (
     <div className="space-y-6">
@@ -297,11 +744,43 @@ export default function ClientLedger() {
                 {client?.contactInfo && <span>{client.contactInfo}</span>}
               </div>
             </div>
-            <Link href={`/clients/${clientId}`}>
-              <span className="text-xs text-cyan-600 hover:text-cyan-800 underline transition-colors whitespace-nowrap cursor-pointer">
-                View Client Profile
-              </span>
-            </Link>
+
+            <div className="flex items-center gap-2">
+              <Link href={`/clients/${clientId}`}>
+                <span className="text-xs text-cyan-600 hover:text-cyan-800 underline transition-colors whitespace-nowrap cursor-pointer">
+                  View Client Profile
+                </span>
+              </Link>
+
+              {!isLoading && invoices.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 border-slate-200 text-slate-700 hover:bg-slate-50"
+                      disabled={isDownloading}
+                    >
+                      {isDownloading
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Download className="h-3.5 w-3.5" />}
+                      Download
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-36">
+                    <DropdownMenuItem onClick={handleDownloadPDF} className="cursor-pointer">
+                      Download PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDownloadXLSX} className="cursor-pointer">
+                      Download XLSX
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDownloadCSV} className="cursor-pointer">
+                      Download CSV
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -382,7 +861,7 @@ export default function ClientLedger() {
                 <th className="text-right px-3 py-3 whitespace-nowrap">Penalty</th>
                 <th className="text-right px-3 py-3 whitespace-nowrap">Pymt Received</th>
                 <th className="text-left px-3 py-3 whitespace-nowrap">Pymt Date</th>
-                <th className="text-left px-3 py-3 whitespace-nowrap">Mode of Payment</th>
+                <th className="text-left px-3 py-3 whitespace-nowrap">Remarks</th>
                 <th className="text-right px-3 py-3 whitespace-nowrap">Balance</th>
               </tr>
             </thead>
@@ -419,11 +898,12 @@ export default function ClientLedger() {
                     const balance = runningBalances[idx];
                     const invType = getInvoiceType(inv);
 
-                    const activeMop = inv.paymentStatus === "refunded" && !mop ? refMop : mop;
-                    const mopLabel = activeMop ? (MOP_LABELS[activeMop] ?? activeMop.replace(/_/g, " ")) : null;
-
-                    const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
                     const isRefunded = inv.paymentStatus === "refunded";
+                    const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
+                    const activeMop = isRefunded && !mop ? refMop : mop;
+                    const mopLabel = activeMop ? (MOP_LABELS[activeMop] ?? activeMop.replace(/_/g, " ")) : null;
+                    const refundNotes = raw.notes as string | undefined;
+                    const remarksLabel = isRefunded ? (refundNotes || mopLabel) : mopLabel;
 
                     let rowCls = "border-b border-slate-100 transition-colors hover:bg-slate-50/60";
                     if (isRefunded) rowCls += " bg-blue-50/20";
@@ -459,11 +939,11 @@ export default function ClientLedger() {
                         <td className="px-3 py-2.5 whitespace-nowrap">
                           <TypeBadge type={invType} />
                         </td>
-                        <td className="px-3 py-2.5 text-slate-600 max-w-[220px]">
+                        <td className="px-3 py-2.5 text-slate-600 max-w-[260px]">
                           {descLines.length === 0
                             ? <span className="text-slate-300">—</span>
                             : descLines.map((line, li) => (
-                                <div key={li} className="leading-snug text-[11px]" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                <div key={li} className="leading-snug text-[11px] break-words whitespace-normal">
                                   {line}
                                 </div>
                               ))}
@@ -489,11 +969,11 @@ export default function ClientLedger() {
                         <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
                           {hasPaid ? fmtDate(inv.updatedAt) : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">
-                          {mopLabel ? (
-                            <span className="inline-flex items-center gap-1 text-slate-600">
-                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400 inline-block" />
-                              {mopLabel}
+                        <td className="px-3 py-2.5 max-w-[180px]">
+                          {remarksLabel ? (
+                            <span className={`inline-flex items-start gap-1 break-words whitespace-normal ${isRefunded && refundNotes ? "text-slate-500 italic text-[11px]" : "text-slate-600"}`}>
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400 inline-block mt-1 shrink-0" />
+                              {remarksLabel}
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
