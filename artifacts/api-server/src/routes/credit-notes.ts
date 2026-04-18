@@ -278,9 +278,26 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
     const newOutstanding = Math.max(0, totalAmount - newPaid - refundAmount);
     const newPaymentStatus = newOutstanding <= 0 ? "paid" : "partial";
 
+    // Build credit remark: "Credit Balance of PKR 24,504.00 Used from INV-XXXX"
+    const cnCurrency = cn.currency ?? "PKR";
+    const formattedAmount = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(applyAmount);
+    const sourceInvoiceNumber = cn.invoice_number ?? "";
+    const creditRemark = sourceInvoiceNumber
+      ? `Credit Balance of ${cnCurrency} ${formattedAmount} Used from ${sourceInvoiceNumber}`
+      : `Credit Balance of ${cnCurrency} ${formattedAmount} Applied`;
+
+    // Append remark to existing notes (preserve existing notes, add on new line if present)
+    const existingNotes = (inv.notes as string | null) ?? "";
+    const newNotes = existingNotes.trim()
+      ? `${existingNotes.trim()}\n${creditRemark}`
+      : creditRemark;
+
     await client.query(
-      `UPDATE invoices SET paid_amount = $1, outstanding_balance = $2, payment_status = $3, updated_at = NOW() WHERE id = $4`,
-      [String(newPaid), String(newOutstanding), newPaymentStatus, invoiceId]
+      `UPDATE invoices SET paid_amount = $1, outstanding_balance = $2, payment_status = $3, notes = $4, updated_at = NOW() WHERE id = $5`,
+      [String(newPaid), String(newOutstanding), newPaymentStatus, newNotes, invoiceId]
     );
 
     await client.query("COMMIT");

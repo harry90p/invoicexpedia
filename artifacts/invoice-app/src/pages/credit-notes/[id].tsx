@@ -86,6 +86,13 @@ export default function CreditNoteDetail() {
     { query: { enabled: !!clientId } }
   );
 
+  // Must stay before early returns — hooks cannot be called conditionally
+  const applicableInvoices = useMemo(() => {
+    return (invoicesData?.invoices ?? []).filter(
+      (inv) => inv.paymentStatus !== "paid" && inv.paymentStatus !== "refunded" && (inv.outstandingBalance ?? 0) > 0
+    );
+  }, [invoicesData]);
+
   const [showVoidDialog, setShowVoidDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDeleteRefundDialog, setShowDeleteRefundDialog] = useState(false);
@@ -243,13 +250,6 @@ export default function CreditNoteDetail() {
   const canVoid = !terminalStatuses.includes(cn.status);
   const canDelete = cn.usedAmount === 0 && cn.status !== "voided";
   const canApply = !terminalStatuses.includes(cn.status) && cn.remainingAmount > 0;
-
-  // Invoices for this client that still have an outstanding balance
-  const applicableInvoices = useMemo(() => {
-    return (invoicesData?.invoices ?? []).filter(
-      (inv) => inv.paymentStatus !== "paid" && inv.paymentStatus !== "refunded" && (inv.outstandingBalance ?? 0) > 0
-    );
-  }, [invoicesData]);
 
   const selectedInvoice = applicableInvoices.find((inv) => String(inv.id) === applyInvoiceId);
   const maxApply = selectedInvoice

@@ -190,9 +190,12 @@ function buildDescriptionLines(inv: Invoice): string[] {
   return lines;
 }
 
-function rowBalance(inv: Invoice): number {
+function rowBalance(inv: Invoice, creditNotes: CreditNote[] = []): number {
   if (inv.paymentStatus === "refunded") {
-    // Refund creates a negative balance: company owes the client the refunded amount
+    // Use the linked credit note's remaining amount so the negative balance
+    // shrinks as credit is applied to other invoices (fully used → 0 contribution)
+    const linkedCN = creditNotes.find((cn) => cn.invoiceId === inv.id);
+    if (linkedCN) return -(linkedCN.remainingAmount ?? 0);
     return -(inv.refundAmount ?? 0);
   }
   return inv.outstandingBalance ?? 0;
@@ -331,7 +334,7 @@ export default function ClientLedger() {
       }, 0),
     [invoices]
   );
-  const outstanding = useMemo(() => invoices.reduce((s, v) => s + rowBalance(v), 0), [invoices]);
+  const outstanding = useMemo(() => invoices.reduce((s, v) => s + rowBalance(v, creditNotes), 0), [invoices, creditNotes]);
   const availableCredit = useMemo(
     () => creditNotes.filter((cn) => cn.status === "available").reduce((s, cn) => s + cn.remainingAmount, 0),
     [creditNotes]
@@ -340,10 +343,10 @@ export default function ClientLedger() {
   const runningBalances = useMemo(() => {
     let balance = 0;
     return invoices.map((inv) => {
-      balance += rowBalance(inv);
+      balance += rowBalance(inv, creditNotes);
       return balance;
     });
-  }, [invoices]);
+  }, [invoices, creditNotes]);
 
   const isOverLimit = creditLimit > 0 && outstanding > creditLimit;
   const isLoading = clientLoading || invoicesLoading || cnLoading;
@@ -536,7 +539,7 @@ export default function ClientLedger() {
       const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row, idx) => {
         const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-        const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
+        const remarksLabel = row.notes || mopLabel || "";
         const dataRow = ws.addRow([
           row.invoiceDate ? new Date(row.invoiceDate) : "",
           row.invoiceNumber,
@@ -688,7 +691,7 @@ export default function ClientLedger() {
       const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row) => {
         const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-        const remarksLabel = row.paymentStatus === "refunded" ? (row.notes || mopLabel || "") : mopLabel;
+        const remarksLabel = row.notes || mopLabel || "";
         lines.push([
           fmtDateShort(row.invoiceDate),
           row.invoiceNumber,
@@ -978,8 +981,8 @@ export default function ClientLedger() {
                     const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
                     const activeMop = isRefunded && !mop ? refMop : mop;
                     const mopLabel = activeMop ? (MOP_LABELS[activeMop] ?? activeMop.replace(/_/g, " ")) : null;
-                    const refundNotes = raw.notes as string | undefined;
-                    const remarksLabel = isRefunded ? (refundNotes || mopLabel) : mopLabel;
+                    const invNotes = raw.notes as string | undefined;
+                    const remarksLabel = invNotes || mopLabel;
 
                     let rowCls = "border-b border-slate-100 transition-colors hover:bg-slate-50/60";
                     if (isRefunded) rowCls += " bg-blue-50/20";
@@ -1047,7 +1050,7 @@ export default function ClientLedger() {
                         </td>
                         <td className="px-3 py-2.5 max-w-[180px]">
                           {remarksLabel ? (
-                            <span className={`inline-flex items-start gap-1 break-words whitespace-normal ${isRefunded && refundNotes ? "text-slate-500 italic text-[11px]" : "text-slate-600"}`}>
+                            <span className={`inline-flex items-start gap-1 break-words whitespace-normal ${invNotes ? "text-slate-500 italic text-[11px]" : "text-slate-600"}`}>
                               <span className="h-1.5 w-1.5 rounded-full bg-slate-400 inline-block mt-1 shrink-0" />
                               {remarksLabel}
                             </span>

@@ -562,10 +562,7 @@ export default function LedgerPDF({
             isRefunded ? styles.tableRowRefund : {},
           ];
           const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-          // Remarks: for refunded invoices show notes/reason, otherwise show mode of payment
-          const remarksText = isRefunded
-            ? (row.notes || mopLabel || "—")
-            : (mopLabel || "—");
+          const remarksText = row.notes || mopLabel || "—";
 
           return (
             <View key={row.id} style={rowStyle}>
@@ -608,7 +605,7 @@ export default function LedgerPDF({
               </View>
               {/* Remarks: wraps for long notes */}
               <View style={{ width: colRemarks }}>
-                <Text style={isRefunded && row.notes ? styles.cellTextGray : styles.cellText}>{remarksText}</Text>
+                <Text style={row.notes ? styles.cellTextGray : styles.cellText}>{remarksText}</Text>
               </View>
               <View style={{ width: colBal, overflow: "hidden" }}>
                 <Text style={
