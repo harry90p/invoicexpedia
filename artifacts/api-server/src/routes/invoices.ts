@@ -528,7 +528,48 @@ router.post("/invoices/:id/payment", async (req, res): Promise<void> => {
   }
 
   let creditNoteId: number | null = null;
-  if (parsed.data.createCreditNote && parsed.data.paymentStatus === "refunded" && refundAmount > 0 && existing.clientId) {
+
+  // Auto-create excess payment credit note when paid amount exceeds invoice total
+  const excessAmount =
+    parsed.data.paymentStatus !== "refunded" && !parsed.data.clearPaymentFields && paidAmount > totalAmount && existing.clientId
+      ? paidAmount - totalAmount
+      : 0;
+
+  if (excessAmount > 0 && existing.clientId) {
+    const creditNoteNumber = await generateCreditNoteNumber();
+    const formattedExcess = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(excessAmount);
+    const excessCurrency = existing.currency ?? "PKR";
+    const [cn] = await db
+      .insert(creditNotesTable)
+      .values({
+        creditNoteNumber,
+        clientId: existing.clientId,
+        clientName: existing.clientName,
+        invoiceId: existing.id,
+        invoiceNumber: existing.invoiceNumber,
+        type: "excess_payment",
+        amount: String(excessAmount),
+        usedAmount: "0",
+        remainingAmount: String(excessAmount),
+        currency: excessCurrency,
+        description: `Excess payment of ${excessCurrency} ${formattedExcess} from ${existing.invoiceNumber}`,
+        status: "available",
+      })
+      .returning();
+
+    creditNoteId = cn.id;
+    updateSet.creditNoteId = cn.id;
+
+    // Append excess payment remark to invoice notes
+    const existingNotes = (existing.notes as string | null) ?? "";
+    const excessRemark = `Excess payment of ${excessCurrency} ${formattedExcess} transferred to Credit Note ${creditNoteNumber}`;
+    updateSet.notes = existingNotes.trim() ? `${existingNotes.trim()}\n${excessRemark}` : excessRemark;
+  }
+
+  if (!excessAmount && parsed.data.createCreditNote && parsed.data.paymentStatus === "refunded" && refundAmount > 0 && existing.clientId) {
     const creditNoteNumber = await generateCreditNoteNumber();
     const refType = parsed.data.refundType || "partial";
     const cnType = refType === "full" ? "refund_credit" : "refund_credit";

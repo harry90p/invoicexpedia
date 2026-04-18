@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { useParams, Link } from "wouter";
-import { useGetInvoice, useRecordPayment, getGetInvoiceQueryKey, FlightPassenger, HotelRoom, TourItem, NonTravelItem } from "@workspace/api-client-react";
+import { useGetInvoice, useRecordPayment, getGetInvoiceQueryKey, useListCreditNotes, getListCreditNotesQueryKey, FlightPassenger, HotelRoom, TourItem, NonTravelItem } from "@workspace/api-client-react";
 import { formatCurrency, formatDate, numberToWords } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { FileDown, Download, Pencil, RotateCcw } from "lucide-react";
+import { FileDown, Download, Pencil, RotateCcw, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -29,6 +29,7 @@ export default function InvoiceDetail() {
   const recordPayment = useRecordPayment();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: creditNotesData } = useListCreditNotes({ clientId: invoice?.clientId ?? 0 });
 
   // Record Payment state
   const [paymentAmount, setPaymentAmount] = useState("");
@@ -53,9 +54,68 @@ export default function InvoiceDetail() {
   const [isRevertPaymentOpen, setIsRevertPaymentOpen] = useState(false);
   const [isRevertRefundOpen, setIsRevertRefundOpen] = useState(false);
 
+  // Apply Credit Note state
+  const [isCreditModalOpen, setIsCreditModalOpen] = useState(false);
+  const [creditNoteId, setCreditNoteId] = useState<string>("");
+  const [creditApplyAmount, setCreditApplyAmount] = useState<string>("");
+  const [creditModeOfPayment, setCreditModeOfPayment] = useState<string>("");
+  const [isApplyingCredit, setIsApplyingCredit] = useState(false);
+
   if (isLoading || !invoice) {
     return <div className="space-y-6 p-8"><Skeleton className="w-full h-[800px]" /></div>;
   }
+
+  // Available credit notes for this client (exclude voided / fully used / fully refunded)
+  const availableCreditNotes = (creditNotesData?.creditNotes ?? []).filter(
+    (cn) => !["voided", "fully_used", "fully_refunded"].includes(cn.status) && cn.remainingAmount > 0
+  );
+  const selectedCreditNote = availableCreditNotes.find((cn) => String(cn.id) === creditNoteId);
+  const maxCreditApply = selectedCreditNote
+    ? Math.min(selectedCreditNote.remainingAmount, invoice.outstandingBalance ?? 0)
+    : 0;
+  const isMixedCreditPayment =
+    creditApplyAmount && Number(creditApplyAmount) > 0 &&
+    Number(creditApplyAmount) < (invoice.outstandingBalance ?? 0);
+
+  const handleApplyCredit = async () => {
+    if (!creditNoteId || !creditApplyAmount || Number(creditApplyAmount) <= 0) return;
+    if (isMixedCreditPayment && !creditModeOfPayment) {
+      toast({ title: "Mode of Payment Required", description: "Select the payment method for the remaining balance.", variant: "destructive" });
+      return;
+    }
+    setIsApplyingCredit(true);
+    try {
+      const body: Record<string, unknown> = {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        amount: Number(creditApplyAmount),
+      };
+      if (creditModeOfPayment) body.modeOfPayment = creditModeOfPayment;
+
+      const res = await fetch(`/api/credit-notes/${creditNoteId}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: "Failed to apply credit", description: err.error ?? "Unknown error", variant: "destructive" });
+        return;
+      }
+      queryClient.invalidateQueries({ queryKey: getGetInvoiceQueryKey(invoiceId) });
+      queryClient.invalidateQueries({ queryKey: getListCreditNotesQueryKey() });
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey.some((k) => String(k).includes("/api/invoices")) });
+      toast({ title: "Credit Applied", description: `${formatCurrency(Number(creditApplyAmount), invoice.currency)} applied to ${invoice.invoiceNumber}` });
+      setIsCreditModalOpen(false);
+      setCreditNoteId("");
+      setCreditApplyAmount("");
+      setCreditModeOfPayment("");
+    } catch {
+      toast({ title: "Failed to apply credit", variant: "destructive" });
+    } finally {
+      setIsApplyingCredit(false);
+    }
+  };
 
   const handleRecordPayment = () => {
     const amt = Number(paymentAmount);
@@ -406,9 +466,156 @@ export default function InvoiceDetail() {
                       <p className="text-xs text-muted-foreground">Auto-determined from payment amount</p>
                     </div>
                   )}
+                  {paymentAmount && Number(paymentAmount) > invoice.totalAmount && (
+                    <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm text-blue-800">
+                      <p className="font-medium">Excess Payment Detected</p>
+                      <p className="mt-0.5 text-blue-700">
+                        An excess of <span className="font-semibold">{formatCurrency(Number(paymentAmount) - invoice.totalAmount, invoice.currency)}</span> will be automatically transferred to a Credit Note and added to this client's credit balance.
+                      </p>
+                    </div>
+                  )}
                   <Button onClick={handleRecordPayment} className="w-full bg-green-600 hover:bg-green-700"
                     disabled={!paymentAmount || recordPayment.isPending}>
                     Save Payment
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {/* Apply Credit Note */}
+          {invoice.paymentStatus !== "paid" && invoice.paymentStatus !== "refunded" && availableCreditNotes.length > 0 && (
+            <Dialog open={isCreditModalOpen} onOpenChange={(open) => {
+              setIsCreditModalOpen(open);
+              if (!open) { setCreditNoteId(""); setCreditApplyAmount(""); setCreditModeOfPayment(""); }
+            }}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="text-purple-700 border-purple-300 hover:bg-purple-50">
+                  <Zap className="w-4 h-4 mr-2" /> Apply Credit
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Apply Credit Note</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-2">
+                  {/* Outstanding balance */}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Outstanding Balance</Label>
+                    <div className="text-xl font-bold text-red-600">{formatCurrency(invoice.outstandingBalance, invoice.currency)}</div>
+                  </div>
+
+                  {/* Select credit note */}
+                  <div className="space-y-2">
+                    <Label>Select Credit Note</Label>
+                    <Select value={creditNoteId} onValueChange={(v) => { setCreditNoteId(v); setCreditApplyAmount(""); setCreditModeOfPayment(""); }}>
+                      <SelectTrigger><SelectValue placeholder="Choose a credit note..." /></SelectTrigger>
+                      <SelectContent>
+                        {availableCreditNotes.map((cn) => (
+                          <SelectItem key={cn.id} value={String(cn.id)}>
+                            <span className="font-mono">{cn.creditNoteNumber}</span>
+                            <span className="ml-2 text-muted-foreground">
+                              — {formatCurrency(cn.remainingAmount, cn.currency)} available
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Credit note summary */}
+                  {selectedCreditNote && (
+                    <div className="bg-purple-50 rounded-lg px-4 py-3 text-sm grid grid-cols-2 gap-3 border border-purple-100">
+                      <div>
+                        <p className="text-xs text-purple-600 font-medium mb-0.5">Credit Note</p>
+                        <p className="font-semibold">{selectedCreditNote.creditNoteNumber}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-purple-600 font-medium mb-0.5">Type</p>
+                        <p className="font-semibold capitalize">{selectedCreditNote.type.replace(/_/g, " ")}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-purple-600 font-medium mb-0.5">Available</p>
+                        <p className="font-semibold text-emerald-700">{formatCurrency(selectedCreditNote.remainingAmount, selectedCreditNote.currency)}</p>
+                      </div>
+                      {selectedCreditNote.invoiceNumber && (
+                        <div>
+                          <p className="text-xs text-purple-600 font-medium mb-0.5">Source Invoice</p>
+                          <p className="font-semibold font-mono">{selectedCreditNote.invoiceNumber}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Amount to apply */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Amount to Apply ({invoice.currency})</Label>
+                      {selectedCreditNote && (
+                        <button
+                          type="button"
+                          className="text-xs text-purple-600 hover:text-purple-800 underline"
+                          onClick={() => { setCreditApplyAmount(String(maxCreditApply)); setCreditModeOfPayment(""); }}
+                        >
+                          Use max ({formatCurrency(maxCreditApply, invoice.currency)})
+                        </button>
+                      )}
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max={maxCreditApply}
+                      placeholder="0.00"
+                      value={creditApplyAmount}
+                      onChange={(e) => { setCreditApplyAmount(e.target.value); setCreditModeOfPayment(""); }}
+                      disabled={!creditNoteId}
+                    />
+                    {creditApplyAmount && Number(creditApplyAmount) > maxCreditApply && maxCreditApply > 0 && (
+                      <p className="text-xs text-red-600">Exceeds maximum of {formatCurrency(maxCreditApply, invoice.currency)}</p>
+                    )}
+                  </div>
+
+                  {/* Mixed payment — mode of payment required */}
+                  {isMixedCreditPayment && Number(creditApplyAmount) <= maxCreditApply && (
+                    <div className="space-y-2">
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        <p className="font-medium">Mixed Payment</p>
+                        <p className="mt-0.5">
+                          Credit covers <span className="font-semibold">{formatCurrency(Number(creditApplyAmount), invoice.currency)}</span>.
+                          Remaining <span className="font-semibold">{formatCurrency((invoice.outstandingBalance ?? 0) - Number(creditApplyAmount), invoice.currency)}</span> to be paid via another method.
+                        </p>
+                      </div>
+                      <Label>
+                        Mode of Payment <span className="text-red-500">*</span>
+                        <span className="text-xs text-muted-foreground font-normal ml-1">(for remaining balance)</span>
+                      </Label>
+                      <Select value={creditModeOfPayment} onValueChange={setCreditModeOfPayment}>
+                        <SelectTrigger><SelectValue placeholder="Select payment method for remaining..." /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="card">Card</SelectItem>
+                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                          <SelectItem value="cheque">Cheque</SelectItem>
+                          <SelectItem value="online_transfer">Online Transfer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={handleApplyCredit}
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+                    disabled={
+                      isApplyingCredit ||
+                      !creditNoteId ||
+                      !creditApplyAmount ||
+                      Number(creditApplyAmount) <= 0 ||
+                      Number(creditApplyAmount) > maxCreditApply ||
+                      !!(isMixedCreditPayment && !creditModeOfPayment)
+                    }
+                  >
+                    {isApplyingCredit ? "Applying..." : "Apply Credit"}
                   </Button>
                 </div>
               </DialogContent>

@@ -1722,6 +1722,7 @@ export const ApplyCreditNoteBody = zod.object({
   invoiceId: zod.number(),
   invoiceNumber: zod.string(),
   amount: zod.number().positive(),
+  modeOfPayment: zod.enum(["cash", "card", "bank_transfer", "cheque", "online_transfer"]).optional(),
 });
 
 export const ClientCreditBalanceParams = zod.object({

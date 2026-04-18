@@ -100,6 +100,7 @@ export default function CreditNoteDetail() {
   // Apply Credit state
   const [applyInvoiceId, setApplyInvoiceId] = useState<string>("");
   const [applyAmount, setApplyAmount] = useState<string>("");
+  const [applyModeOfPayment, setApplyModeOfPayment] = useState<string>("");
   const [isApplying, setIsApplying] = useState(false);
 
   // Refund processed form state
@@ -260,16 +261,26 @@ export default function CreditNoteDetail() {
     if (!applyInvoiceId || !applyAmount || Number(applyAmount) <= 0) return;
     const selectedInv = applicableInvoices.find((inv) => String(inv.id) === applyInvoiceId);
     if (!selectedInv) return;
+
+    const isMixedPayment = Number(applyAmount) < (selectedInv.outstandingBalance ?? 0);
+    if (isMixedPayment && !applyModeOfPayment) {
+      toast({ title: "Mode of Payment Required", description: "Please select the payment method used for the remaining balance.", variant: "destructive" });
+      return;
+    }
+
     setIsApplying(true);
     try {
+      const body: Record<string, unknown> = {
+        invoiceId: selectedInv.id,
+        invoiceNumber: selectedInv.invoiceNumber,
+        amount: Number(applyAmount),
+      };
+      if (applyModeOfPayment) body.modeOfPayment = applyModeOfPayment;
+
       const res = await fetch(`/api/credit-notes/${id}/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invoiceId: selectedInv.id,
-          invoiceNumber: selectedInv.invoiceNumber,
-          amount: Number(applyAmount),
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -282,6 +293,7 @@ export default function CreditNoteDetail() {
       toast({ title: "Credit Applied", description: `${formatCurrency(Number(applyAmount), cn.currency)} applied to ${selectedInv.invoiceNumber}` });
       setApplyInvoiceId("");
       setApplyAmount("");
+      setApplyModeOfPayment("");
     } catch {
       toast({ title: "Failed to apply credit", variant: "destructive" });
     } finally {
@@ -461,7 +473,7 @@ export default function CreditNoteDetail() {
                       <button
                         type="button"
                         className="text-xs text-purple-600 hover:text-purple-800 underline"
-                        onClick={() => setApplyAmount(String(maxApply))}
+                        onClick={() => { setApplyAmount(String(maxApply)); setApplyModeOfPayment(""); }}
                       >
                         Use max ({formatCurrency(maxApply, cn.currency)})
                       </button>
@@ -474,7 +486,7 @@ export default function CreditNoteDetail() {
                     max={maxApply}
                     placeholder="0.00"
                     value={applyAmount}
-                    onChange={(e) => setApplyAmount(e.target.value)}
+                    onChange={(e) => { setApplyAmount(e.target.value); setApplyModeOfPayment(""); }}
                     disabled={!applyInvoiceId}
                   />
                   {applyAmount && Number(applyAmount) > maxApply && (
@@ -484,6 +496,39 @@ export default function CreditNoteDetail() {
                   )}
                 </div>
 
+                {/* Show mode of payment when credit only partially covers the outstanding balance */}
+                {selectedInvoice && applyAmount && Number(applyAmount) > 0 && Number(applyAmount) <= maxApply &&
+                  Number(applyAmount) < (selectedInvoice.outstandingBalance ?? 0) && (
+                  <div className="space-y-2">
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <p className="font-medium">Mixed Payment Detected</p>
+                      <p className="mt-0.5">
+                        Credit covers <span className="font-semibold">{formatCurrency(Number(applyAmount), cn.currency)}</span>.
+                        The remaining <span className="font-semibold">{formatCurrency((selectedInvoice.outstandingBalance ?? 0) - Number(applyAmount), cn.currency)}</span> must be paid via another method.
+                      </p>
+                    </div>
+                    <Label>
+                      Mode of Payment <span className="text-red-500">*</span>
+                      <span className="text-xs text-muted-foreground font-normal ml-1">(for the remaining balance)</span>
+                    </Label>
+                    <Select value={applyModeOfPayment} onValueChange={setApplyModeOfPayment}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select payment method for remaining..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="card">Card</SelectItem>
+                        <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="cheque">Cheque</SelectItem>
+                        <SelectItem value="online_transfer">Online Transfer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!applyModeOfPayment && (
+                      <p className="text-xs text-amber-700">Required for mixed payments — this will appear in the ledger remark.</p>
+                    )}
+                  </div>
+                )}
+
                 <Button
                   className="w-full bg-purple-600 hover:bg-purple-700"
                   onClick={handleApplyCredit}
@@ -492,7 +537,8 @@ export default function CreditNoteDetail() {
                     !applyInvoiceId ||
                     !applyAmount ||
                     Number(applyAmount) <= 0 ||
-                    Number(applyAmount) > maxApply
+                    Number(applyAmount) > maxApply ||
+                    (Number(applyAmount) < (selectedInvoice?.outstandingBalance ?? 0) && !applyModeOfPayment)
                   }
                 >
                   {isApplying ? "Applying..." : "Apply Credit"}

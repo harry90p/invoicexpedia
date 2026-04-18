@@ -222,7 +222,7 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
   if (!bodyParsed.success) return res.status(400).json({ error: "Invalid body" });
 
   const cnId = paramsParsed.data.id;
-  const { amount: applyAmount, invoiceId, invoiceNumber } = bodyParsed.data;
+  const { amount: applyAmount, invoiceId, invoiceNumber, modeOfPayment } = bodyParsed.data;
 
   const client = await pool.connect();
   try {
@@ -278,16 +278,30 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
     const newOutstanding = Math.max(0, totalAmount - newPaid - refundAmount);
     const newPaymentStatus = newOutstanding <= 0 ? "paid" : "partial";
 
-    // Build credit remark: "Credit Balance of PKR 24,504.00 Used from INV-XXXX"
+    // Build credit remark
     const cnCurrency = cn.currency ?? "PKR";
     const formattedAmount = new Intl.NumberFormat("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(applyAmount);
     const sourceInvoiceNumber = cn.invoice_number ?? "";
-    const creditRemark = sourceInvoiceNumber
+
+    const MOP_LABELS: Record<string, string> = {
+      cash: "Cash",
+      card: "Card",
+      bank_transfer: "Bank Transfer",
+      cheque: "Cheque",
+      online_transfer: "Online Transfer",
+    };
+
+    const creditPart = sourceInvoiceNumber
       ? `Credit Balance of ${cnCurrency} ${formattedAmount} Used from ${sourceInvoiceNumber}`
       : `Credit Balance of ${cnCurrency} ${formattedAmount} Applied`;
+
+    // If a mode of payment is provided (mixed payment), prefix it: "Bank Transfer - Credit Balance of PKR X Used from INV-XXXX"
+    const creditRemark = modeOfPayment
+      ? `${MOP_LABELS[modeOfPayment] ?? modeOfPayment} - ${creditPart}`
+      : creditPart;
 
     // Append remark to existing notes (preserve existing notes, add on new line if present)
     const existingNotes = (inv.notes as string | null) ?? "";
@@ -295,9 +309,18 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
       ? `${existingNotes.trim()}\n${creditRemark}`
       : creditRemark;
 
+    // Build invoice field updates — include modeOfPayment if provided for mixed payment
+    const invoiceSetClauses = ["paid_amount = $1", "outstanding_balance = $2", "payment_status = $3", "notes = $4", "updated_at = NOW()"];
+    const invoiceParams: unknown[] = [String(newPaid), String(newOutstanding), newPaymentStatus, newNotes, invoiceId];
+
+    if (modeOfPayment) {
+      invoiceSetClauses.splice(4, 0, `mode_of_payment = $${invoiceParams.length}`);
+      invoiceParams.splice(invoiceParams.length - 1, 0, modeOfPayment);
+    }
+
     await client.query(
-      `UPDATE invoices SET paid_amount = $1, outstanding_balance = $2, payment_status = $3, notes = $4, updated_at = NOW() WHERE id = $5`,
-      [String(newPaid), String(newOutstanding), newPaymentStatus, newNotes, invoiceId]
+      `UPDATE invoices SET ${invoiceSetClauses.join(", ")} WHERE id = $${invoiceParams.length}`,
+      invoiceParams
     );
 
     await client.query("COMMIT");

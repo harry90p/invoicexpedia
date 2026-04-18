@@ -191,14 +191,13 @@ function buildDescriptionLines(inv: Invoice): string[] {
 }
 
 function rowBalance(inv: Invoice, creditNotes: CreditNote[] = []): number {
-  if (inv.paymentStatus === "refunded") {
-    // Use the linked credit note's remaining amount so the negative balance
-    // shrinks as credit is applied to other invoices (fully used → 0 contribution)
-    const linkedCN = creditNotes.find((cn) => cn.invoiceId === inv.id);
-    if (linkedCN) return -(linkedCN.remainingAmount ?? 0);
-    return -(inv.refundAmount ?? 0);
-  }
-  return inv.outstandingBalance ?? 0;
+  const raw = inv as unknown as Record<string, unknown>;
+  const totalAmount = inv.totalAmount ?? 0;
+  const refundAmount = getLedgerRefundAmount(inv, creditNotes);
+  const penalty =
+    Number(raw.cancellationCharges ?? 0) + Number(raw.otherRetainedCharges ?? 0);
+  const paidAmount = inv.paidAmount ?? 0;
+  return totalAmount - refundAmount + penalty - paidAmount;
 }
 
 function getLedgerRefundAmount(inv: Invoice, creditNotes: CreditNote[] = []): number {
