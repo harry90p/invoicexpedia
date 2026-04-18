@@ -319,9 +319,23 @@ const MOP_LABELS: Record<string, string> = {
   bank_transfer: "Bank Transfer",
   cash: "Cash",
   cheque: "Cheque",
-  card: "Card",
+  card: "Credit Card",
   online_transfer: "Online Transfer",
 };
+
+function formatLedgerRemark(row: LedgerRow) {
+  const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
+  const creditAmount = Number(row.creditAppliedAmount ?? 0);
+  const creditNoteNumber = row.creditAppliedNoteNumber?.trim();
+  if (creditAmount > 0 && creditNoteNumber) {
+    const creditLabel = `Credit Balance of ${row.currency ?? "PKR"} ${creditAmount.toLocaleString("en-PK", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} Used from Credit Note ${creditNoteNumber}`;
+    return mopLabel ? `${mopLabel} - ${creditLabel}` : creditLabel;
+  }
+  return row.remarks || mopLabel || row.notes || "";
+}
 
 function fmtDate(str: string | null | undefined) {
   if (!str) return "—";
@@ -348,6 +362,7 @@ export interface LedgerRow {
   dealBookingId?: string;
   category?: string;
   description: string;
+  currency?: string;
   totalAmount: number;
   refundAmount: number;
   penalty: number;
@@ -355,6 +370,9 @@ export interface LedgerRow {
   paymentDate?: string;
   modeOfPayment?: string;
   notes?: string;
+  creditAppliedAmount?: number;
+  creditAppliedNoteNumber?: string;
+  remarks?: string;
   balance: number;
   paymentStatus: string;
 }
@@ -561,8 +579,7 @@ export default function LedgerPDF({
             idx % 2 === 1 ? styles.tableRowAlt : {},
             isRefunded ? styles.tableRowRefund : {},
           ];
-          const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-          const remarksText = row.notes || mopLabel || "—";
+          const remarksText = formatLedgerRemark(row) || "—";
 
           return (
             <View key={row.id} style={rowStyle}>
@@ -605,7 +622,7 @@ export default function LedgerPDF({
               </View>
               {/* Remarks: wraps for long notes */}
               <View style={{ width: colRemarks }}>
-                <Text style={row.notes ? styles.cellTextGray : styles.cellText}>{remarksText}</Text>
+                <Text style={row.notes && !row.remarks ? styles.cellTextGray : styles.cellText}>{remarksText}</Text>
               </View>
               <View style={{ width: colBal, overflow: "hidden" }}>
                 <Text style={

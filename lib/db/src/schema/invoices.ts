@@ -88,6 +88,8 @@ export const invoicesTable = pgTable("invoices", {
   linkedInvoiceId: integer("linked_invoice_id"),
   linkedInvoiceNumber: text("linked_invoice_number"),
   creditNoteId: integer("credit_note_id"),
+  creditAppliedAmount: numeric("credit_applied_amount", { precision: 15, scale: 2 }).default("0"),
+  creditAppliedNoteNumber: text("credit_applied_note_number"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

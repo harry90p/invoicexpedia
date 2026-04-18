@@ -70,11 +70,25 @@ const VERTICAL_COLORS: Record<string, string> = {
 
 const MOP_LABELS: Record<string, string> = {
   bank_transfer:    "Bank Transfer",
-  cash:             "Cash Deposit",
-  cheque:           "Cheque Deposit",
-  card:             "Card Payment",
+  cash:             "Cash",
+  cheque:           "Cheque",
+  card:             "Credit Card",
   online_transfer:  "Online Transfer",
 };
+
+function formatLedgerRemark(row: Pick<LedgerRow, "modeOfPayment" | "notes" | "creditAppliedAmount" | "creditAppliedNoteNumber" | "currency">) {
+  const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
+  const creditAmount = Number(row.creditAppliedAmount ?? 0);
+  const creditNoteNumber = row.creditAppliedNoteNumber?.trim();
+  if (creditAmount > 0 && creditNoteNumber) {
+    const creditLabel = `Credit Balance of ${row.currency ?? "PKR"} ${creditAmount.toLocaleString("en-PK", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} Used from Credit Note ${creditNoteNumber}`;
+    return mopLabel ? `${mopLabel} - ${creditLabel}` : creditLabel;
+  }
+  return mopLabel || row.notes || "";
+}
 
 function getInvoiceType(inv: Invoice): "domestic" | "international" | "mixed" | null {
   const raw = inv as unknown as Record<string, unknown>;
@@ -196,7 +210,7 @@ function rowBalance(inv: Invoice, creditNotes: CreditNote[] = []): number {
   const refundAmount = getLedgerRefundAmount(inv, creditNotes);
   const penalty =
     Number(raw.cancellationCharges ?? 0) + Number(raw.otherRetainedCharges ?? 0);
-  const paidAmount = inv.paidAmount ?? 0;
+  const paidAmount = Math.min(inv.paidAmount ?? 0, totalAmount);
   return totalAmount - refundAmount + penalty - paidAmount;
 }
 
@@ -269,24 +283,30 @@ function buildLedgerRows(invoices: Invoice[], runningBalances: number[], creditN
     const descLines = buildDescriptionLines(inv);
     const activeMop = inv.paymentStatus === "refunded" && !mop ? refMop : mop;
     const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
+    const creditAppliedAmount = toNumber(raw.creditAppliedAmount);
+    const creditAppliedNoteNumber = raw.creditAppliedNoteNumber as string | undefined;
 
-    return {
+    const row: LedgerRow = {
       id: inv.id,
       invoiceDate: inv.invoiceDate,
       invoiceNumber: inv.invoiceNumber,
       dealBookingId: dealBookingId || "",
       category: inv.category,
       description: descLines.join(" | "),
+      currency: inv.currency,
       totalAmount: inv.totalAmount ?? 0,
       refundAmount: getLedgerRefundAmount(inv, creditNotes),
       penalty,
-      paidAmount: inv.paidAmount ?? 0,
+      paidAmount: Math.min(inv.paidAmount ?? 0, inv.totalAmount ?? 0),
       paymentDate: hasPaid ? inv.updatedAt : undefined,
       modeOfPayment: activeMop,
       notes: (raw.notes as string | undefined) || undefined,
+      creditAppliedAmount,
+      creditAppliedNoteNumber,
       balance: runningBalances[idx] ?? 0,
       paymentStatus: inv.paymentStatus,
     };
+    return { ...row, remarks: formatLedgerRemark(row) };
   });
 }
 
@@ -319,7 +339,7 @@ export default function ClientLedger() {
   const creditNotes = useMemo(() => creditNotesData?.creditNotes ?? [], [creditNotesData]);
 
   const totalInvoiced = useMemo(() => invoices.reduce((s, v) => s + (v.totalAmount ?? 0), 0), [invoices]);
-  const totalPaid = useMemo(() => invoices.reduce((s, v) => s + (v.paidAmount ?? 0), 0), [invoices]);
+  const totalPaid = useMemo(() => invoices.reduce((s, v) => s + Math.min(v.paidAmount ?? 0, v.totalAmount ?? 0), 0), [invoices]);
   const totalRefunded = useMemo(
     () => invoices.reduce((s, v) => s + getLedgerRefundAmount(v, creditNotes), 0),
     [invoices, creditNotes]
@@ -537,8 +557,7 @@ export default function ClientLedger() {
 
       const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row, idx) => {
-        const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-        const remarksLabel = row.notes || mopLabel || "";
+        const remarksLabel = row.remarks || "";
         const dataRow = ws.addRow([
           row.invoiceDate ? new Date(row.invoiceDate) : "",
           row.invoiceNumber,
@@ -689,8 +708,7 @@ export default function ClientLedger() {
 
       const ledgerRows = buildLedgerRows(invoices, runningBalances, creditNotes);
       ledgerRows.forEach((row) => {
-        const mopLabel = row.modeOfPayment ? (MOP_LABELS[row.modeOfPayment] ?? row.modeOfPayment.replace(/_/g, " ")) : "";
-        const remarksLabel = row.notes || mopLabel || "";
+        const remarksLabel = row.remarks || "";
         lines.push([
           fmtDateShort(row.invoiceDate),
           row.invoiceNumber,
@@ -978,10 +996,17 @@ export default function ClientLedger() {
 
                     const isRefunded = inv.paymentStatus === "refunded";
                     const hasPaid = inv.paidAmount > 0 || inv.paymentStatus === "paid";
+                    const paidDisplayAmount = Math.min(inv.paidAmount ?? 0, inv.totalAmount ?? 0);
                     const activeMop = isRefunded && !mop ? refMop : mop;
                     const mopLabel = activeMop ? (MOP_LABELS[activeMop] ?? activeMop.replace(/_/g, " ")) : null;
                     const invNotes = raw.notes as string | undefined;
-                    const remarksLabel = invNotes || mopLabel;
+                    const remarksLabel = formatLedgerRemark({
+                      modeOfPayment: activeMop,
+                      notes: invNotes,
+                      creditAppliedAmount: toNumber(raw.creditAppliedAmount),
+                      creditAppliedNoteNumber: raw.creditAppliedNoteNumber as string | undefined,
+                      currency: inv.currency ?? currency,
+                    });
 
                     let rowCls = "border-b border-slate-100 transition-colors hover:bg-slate-50/60";
                     if (isRefunded) rowCls += " bg-blue-50/20";
@@ -1040,8 +1065,8 @@ export default function ClientLedger() {
                             : <span className="text-slate-400">{formatCurrency(0, inv.currency ?? currency)}</span>}
                         </td>
                         <td className="px-2.5 py-2.5 text-right whitespace-nowrap">
-                          {inv.paidAmount > 0
-                            ? <span className="text-emerald-600 font-semibold">{formatCurrency(inv.paidAmount, inv.currency ?? currency)}</span>
+                          {paidDisplayAmount > 0
+                            ? <span className="text-emerald-600 font-semibold">{formatCurrency(paidDisplayAmount, inv.currency ?? currency)}</span>
                             : <span className="text-slate-400">{formatCurrency(0, inv.currency ?? currency)}</span>}
                         </td>
                         <td className="px-2.5 py-2.5 text-slate-500 whitespace-normal leading-snug text-center">

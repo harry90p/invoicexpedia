@@ -274,47 +274,39 @@ router.post("/credit-notes/:id/apply", async (req, res) => {
     const totalAmount = Number(inv.total_amount);
     const currentPaid = Number(inv.paid_amount ?? 0);
     const refundAmount = Number(inv.refund_amount ?? 0);
-    const newPaid = currentPaid + applyAmount;
+    const newPaid = Math.min(totalAmount, currentPaid + applyAmount);
     const newOutstanding = Math.max(0, totalAmount - newPaid - refundAmount);
     const newPaymentStatus = newOutstanding <= 0 ? "paid" : "partial";
-
-    // Build credit remark
-    const cnCurrency = cn.currency ?? "PKR";
-    const formattedAmount = new Intl.NumberFormat("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(applyAmount);
-    const sourceInvoiceNumber = cn.invoice_number ?? "";
-
-    const MOP_LABELS: Record<string, string> = {
-      cash: "Cash",
-      card: "Card",
-      bank_transfer: "Bank Transfer",
-      cheque: "Cheque",
-      online_transfer: "Online Transfer",
-    };
-
-    const creditPart = sourceInvoiceNumber
-      ? `Credit Balance of ${cnCurrency} ${formattedAmount} Used from ${sourceInvoiceNumber}`
-      : `Credit Balance of ${cnCurrency} ${formattedAmount} Applied`;
-
-    // If a mode of payment is provided (mixed payment), prefix it: "Bank Transfer - Credit Balance of PKR X Used from INV-XXXX"
-    const creditRemark = modeOfPayment
-      ? `${MOP_LABELS[modeOfPayment] ?? modeOfPayment} - ${creditPart}`
-      : creditPart;
-
-    // Append remark to existing notes (preserve existing notes, add on new line if present)
-    const existingNotes = (inv.notes as string | null) ?? "";
-    const newNotes = existingNotes.trim()
-      ? `${existingNotes.trim()}\n${creditRemark}`
-      : creditRemark;
+    const existingCreditApplied = Number(inv.credit_applied_amount ?? 0);
+    const newCreditApplied = existingCreditApplied + applyAmount;
+    const existingCreditNoteNumbers = String(inv.credit_applied_note_number ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const newCreditNoteNumbers = existingCreditNoteNumbers.includes(cn.credit_note_number)
+      ? existingCreditNoteNumbers
+      : [...existingCreditNoteNumbers, cn.credit_note_number];
 
     // Build invoice field updates — include modeOfPayment if provided for mixed payment
-    const invoiceSetClauses = ["paid_amount = $1", "outstanding_balance = $2", "payment_status = $3", "notes = $4", "updated_at = NOW()"];
-    const invoiceParams: unknown[] = [String(newPaid), String(newOutstanding), newPaymentStatus, newNotes, invoiceId];
+    const invoiceSetClauses = [
+      "paid_amount = $1",
+      "outstanding_balance = $2",
+      "payment_status = $3",
+      "credit_applied_amount = $4",
+      "credit_applied_note_number = $5",
+      "updated_at = NOW()",
+    ];
+    const invoiceParams: unknown[] = [
+      String(newPaid),
+      String(newOutstanding),
+      newPaymentStatus,
+      String(newCreditApplied),
+      newCreditNoteNumbers.join(", "),
+      invoiceId,
+    ];
 
     if (modeOfPayment) {
-      invoiceSetClauses.splice(4, 0, `mode_of_payment = $${invoiceParams.length}`);
+      invoiceSetClauses.splice(3, 0, `mode_of_payment = $${invoiceParams.length}`);
       invoiceParams.splice(invoiceParams.length - 1, 0, modeOfPayment);
     }
 

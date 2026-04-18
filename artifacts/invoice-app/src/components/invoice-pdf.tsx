@@ -625,6 +625,7 @@ interface InvoiceData {
   refundType?: string | null;
   refundPaymentRef?: string | null;
   refundModeOfPayment?: string | null;
+  linkedInvoiceId?: number | null;
   linkedInvoiceNumber?: string | null;
   creditNoteId?: number | null;
   notes?: string;
@@ -653,6 +654,13 @@ export default function InvoicePDF({ invoice }: { invoice: InvoiceData }) {
   const otherCharges = Number(invoice.otherRetainedCharges || 0);
   const netRefund = Number(invoice.refundAmount || 0);
   const totalDeductions = cancCharges + otherCharges;
+  const hasStaleRefundFields = !isRefunded && Boolean(
+    invoice.refundType ||
+    invoice.refundPaymentRef ||
+    invoice.refundModeOfPayment ||
+    invoice.linkedInvoiceId ||
+    invoice.linkedInvoiceNumber
+  );
 
   const hasBank =
     invoice.bankName ||
@@ -1186,7 +1194,7 @@ export default function InvoicePDF({ invoice }: { invoice: InvoiceData }) {
             {invoice.paidAmount > 0 && !isRefunded && (
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Less Amount Paid</Text>
-                <Text style={styles.totalValue}>{fmt(invoice.paidAmount, cur)}</Text>
+                <Text style={styles.totalValue}>{fmt(Math.min(invoice.paidAmount, invoice.totalAmount), cur)}</Text>
               </View>
             )}
           </View>
@@ -1337,7 +1345,7 @@ export default function InvoicePDF({ invoice }: { invoice: InvoiceData }) {
         )}
 
         {/* Notes — only shown when not refunded (refund notes shown inside refund section) */}
-        {invoice.notes && !isRefunded && (
+        {invoice.notes && !isRefunded && !hasStaleRefundFields && (
           <View style={styles.notesSection}>
             <Text style={styles.notesLabel}>Notes</Text>
             <Text style={styles.notesText}>{invoice.notes}</Text>

@@ -76,6 +76,23 @@ export default function InvoiceDetail() {
   const isMixedCreditPayment =
     creditApplyAmount && Number(creditApplyAmount) > 0 &&
     Number(creditApplyAmount) < (invoice.outstandingBalance ?? 0);
+  const invoiceExtra = invoice as unknown as {
+    refundType?: string | null;
+    refundPaymentRef?: string | null;
+    refundModeOfPayment?: string | null;
+    linkedInvoiceId?: number | null;
+    linkedInvoiceNumber?: string | null;
+  };
+  const isRefundedInvoice = invoice.paymentStatus === "refunded";
+  const paidDisplayAmount = Math.min(invoice.paidAmount, invoice.totalAmount);
+  const hasStaleRefundFields = !isRefundedInvoice && Boolean(
+    invoiceExtra.refundType ||
+    invoiceExtra.refundPaymentRef ||
+    invoiceExtra.refundModeOfPayment ||
+    invoiceExtra.linkedInvoiceId ||
+    invoiceExtra.linkedInvoiceNumber
+  );
+  const notesForTerms = hasStaleRefundFields ? "" : invoice.notes;
 
   const handleApplyCredit = async () => {
     if (!creditNoteId || !creditApplyAmount || Number(creditApplyAmount) <= 0) return;
@@ -243,6 +260,7 @@ export default function InvoiceDetail() {
           refundAmount: 0,
           cancellationCharges: 0,
           otherRetainedCharges: 0,
+          notes: "",
         } as Parameters<typeof recordPayment.mutate>[0]["data"],
       },
       {
@@ -350,7 +368,7 @@ export default function InvoiceDetail() {
 
       ws.addRow([]);
       ws.addRow(["Grand Total", "", "", "", "", invoice.totalAmount]).font = bold;
-      if (invoice.paidAmount > 0) ws.addRow(["Paid Amount", "", "", "", "", invoice.paidAmount]);
+      if (invoice.paidAmount > 0) ws.addRow(["Paid Amount", "", "", "", "", paidDisplayAmount]);
       if (invoice.outstandingBalance > 0) ws.addRow(["Balance Due", "", "", "", "", invoice.outstandingBalance]).font = bold;
       const invExt = invoice as unknown as { modeOfPayment?: string; convenienceFeeAmount?: number; convenienceFeeRefundable?: string; cancellationCharges?: number; otherRetainedCharges?: number };
       if (invExt.modeOfPayment) ws.addRow(["Payment Mode", "", "", "", "", MOP_LABELS[invExt.modeOfPayment] || invExt.modeOfPayment]);
@@ -1183,7 +1201,7 @@ export default function InvoiceDetail() {
             const cancCharges = Number(invEx.cancellationCharges || 0);
             const otherCharges = Number(invEx.otherRetainedCharges || 0);
             const totalDeductions = cancCharges + otherCharges;
-            const isRefunded = invoice.paymentStatus === "refunded";
+            const isRefunded = isRefundedInvoice;
             const amountInWordsValue = isRefunded ? invoice.refundAmount : invoice.outstandingBalance > 0 ? invoice.outstandingBalance : invoice.totalAmount;
             return (
               <>
@@ -1206,7 +1224,7 @@ export default function InvoiceDetail() {
                         {invoice.paidAmount > 0 && !isRefunded && (
                           <tr>
                             <td className="py-2 text-green-600 font-medium">Paid Amount</td>
-                            <td className="py-2 font-medium text-green-600">-{formatCurrency(invoice.paidAmount, invoice.currency)}</td>
+                            <td className="py-2 font-medium text-green-600">-{formatCurrency(paidDisplayAmount, invoice.currency)}</td>
                           </tr>
                         )}
                         {invEx.convenienceFeeAmount! > 0 && (
@@ -1363,10 +1381,10 @@ export default function InvoiceDetail() {
 
           {/* Notes and Bank Details */}
           <div className="flex flex-col gap-6">
-            {invoice.notes && (
+            {notesForTerms && (
               <div>
                 <h4 className="font-bold text-slate-800 mb-2 uppercase text-xs">Notes & Terms</h4>
-                <p className="text-slate-600 whitespace-pre-line text-sm bg-slate-50 p-4 rounded">{invoice.notes}</p>
+                <p className="text-slate-600 whitespace-pre-line text-sm bg-slate-50 p-4 rounded">{notesForTerms}</p>
               </div>
             )}
             

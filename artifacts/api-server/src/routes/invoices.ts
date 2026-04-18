@@ -144,6 +144,8 @@ function formatInvoiceRow(row: typeof invoicesTable.$inferSelect) {
     linkedInvoiceId: row.linkedInvoiceId ?? null,
     linkedInvoiceNumber: row.linkedInvoiceNumber ?? null,
     creditNoteId: row.creditNoteId ?? null,
+    creditAppliedAmount: parseFloat(String(row.creditAppliedAmount ?? "0")),
+    creditAppliedNoteNumber: row.creditAppliedNoteNumber ?? null,
   };
 }
 
@@ -489,7 +491,16 @@ router.post("/invoices/:id/payment", async (req, res): Promise<void> => {
   }
 
   const totalAmount = parseFloat(String(existing.totalAmount));
-  const paidAmount = parsed.data.amount;
+  const existingPaidAmount = parseFloat(String(existing.paidAmount ?? "0"));
+  const requestedPaidAmount = parsed.data.amount;
+  const combinedPaidAmount =
+    parsed.data.paymentStatus !== "refunded" && !parsed.data.clearPaymentFields
+      ? existingPaidAmount + requestedPaidAmount
+      : requestedPaidAmount;
+  const paidAmount =
+    parsed.data.paymentStatus !== "refunded" && combinedPaidAmount > totalAmount
+      ? totalAmount
+      : combinedPaidAmount;
   const refundAmount = parsed.data.refundAmount ?? parseFloat(String(existing.refundAmount));
   const cancellationCharges = parsed.data.cancellationCharges ?? parseFloat(String(existing.cancellationCharges ?? "0"));
   const otherRetainedCharges = parsed.data.otherRetainedCharges ?? parseFloat(String(existing.otherRetainedCharges ?? "0"));
@@ -502,7 +513,7 @@ router.post("/invoices/:id/payment", async (req, res): Promise<void> => {
     cancellationCharges: String(cancellationCharges),
     otherRetainedCharges: String(otherRetainedCharges),
     paymentStatus: parsed.data.paymentStatus,
-    notes: parsed.data.notes ?? existing.notes,
+    notes: parsed.data.notes !== undefined ? parsed.data.notes : existing.notes,
   };
 
   if (parsed.data.refundType !== undefined) updateSet.refundType = parsed.data.refundType;
@@ -521,18 +532,32 @@ router.post("/invoices/:id/payment", async (req, res): Promise<void> => {
     updateSet.linkedInvoiceId = null;
     updateSet.linkedInvoiceNumber = null;
     updateSet.creditNoteId = null;
+    updateSet.creditAppliedAmount = "0";
+    updateSet.creditAppliedNoteNumber = null;
   } else {
     if (parsed.data.modeOfPayment !== undefined) updateSet.modeOfPayment = parsed.data.modeOfPayment;
     if (parsed.data.convenienceFeeAmount !== undefined) updateSet.convenienceFeeAmount = String(parsed.data.convenienceFeeAmount);
     if (parsed.data.convenienceFeeRefundable !== undefined) updateSet.convenienceFeeRefundable = parsed.data.convenienceFeeRefundable;
   }
 
+  if (existing.paymentStatus === "refunded" && parsed.data.paymentStatus !== "refunded") {
+    updateSet.refundType = null;
+    updateSet.refundPaymentRef = null;
+    updateSet.refundModeOfPayment = null;
+    updateSet.linkedInvoiceId = null;
+    updateSet.linkedInvoiceNumber = null;
+    updateSet.creditNoteId = null;
+    updateSet.creditAppliedAmount = "0";
+    updateSet.creditAppliedNoteNumber = null;
+    updateSet.notes = parsed.data.notes !== undefined ? parsed.data.notes : "";
+  }
+
   let creditNoteId: number | null = null;
 
   // Auto-create excess payment credit note when paid amount exceeds invoice total
   const excessAmount =
-    parsed.data.paymentStatus !== "refunded" && !parsed.data.clearPaymentFields && paidAmount > totalAmount && existing.clientId
-      ? paidAmount - totalAmount
+    parsed.data.paymentStatus !== "refunded" && !parsed.data.clearPaymentFields && combinedPaidAmount > totalAmount && existing.clientId
+      ? combinedPaidAmount - totalAmount
       : 0;
 
   if (excessAmount > 0 && existing.clientId) {
@@ -563,10 +588,6 @@ router.post("/invoices/:id/payment", async (req, res): Promise<void> => {
     creditNoteId = cn.id;
     updateSet.creditNoteId = cn.id;
 
-    // Append excess payment remark to invoice notes
-    const existingNotes = (existing.notes as string | null) ?? "";
-    const excessRemark = `Excess payment of ${excessCurrency} ${formattedExcess} transferred to Credit Note ${creditNoteNumber}`;
-    updateSet.notes = existingNotes.trim() ? `${existingNotes.trim()}\n${excessRemark}` : excessRemark;
   }
 
   if (!excessAmount && parsed.data.createCreditNote && parsed.data.paymentStatus === "refunded" && refundAmount > 0 && existing.clientId) {
